@@ -631,6 +631,68 @@
 
         #round-banner #banner-new:empty { display: none; }
 
+        /* Corgi close-up caption (start-of-run hello + round-clear celebration) */
+        #pose-caption {
+            position: fixed;
+            top: max(9%, calc(env(safe-area-inset-top) + 28px));
+            left: 50%;
+            transform: translate(-50%, -8px) scale(0.92);
+            z-index: 15;
+            pointer-events: none;
+            text-align: center;
+            width: min(92vw, 900px);
+            opacity: 0;
+            transition: opacity 0.25s ease, transform 0.25s ease;
+        }
+
+        #pose-caption.show {
+            opacity: 1;
+            transform: translate(-50%, 0) scale(1);
+        }
+
+        #pose-caption h2 {
+            font-family: 'Orbitron', sans-serif;
+            font-size: clamp(1.35rem, 6.2vw, 2.5rem);
+            font-weight: 900;
+            color: var(--neon-yellow);
+            text-shadow: 0 0 24px rgba(255, 213, 0, 0.9), 0 4px 12px #000;
+            letter-spacing: 0.06em;
+            line-height: 1.15;
+        }
+
+        #pose-caption p {
+            font-family: 'Orbitron', sans-serif;
+            font-size: clamp(0.72rem, 3.2vw, 0.95rem);
+            font-weight: 800;
+            color: var(--neon-cyan);
+            text-shadow: 0 0 14px rgba(0, 245, 255, 0.95), 0 2px 6px #000;
+            margin-top: 6px;
+            letter-spacing: 0.12em;
+        }
+
+        #pose-skip {
+            position: fixed;
+            bottom: max(22px, env(safe-area-inset-bottom));
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 15;
+            pointer-events: none;
+            font-family: 'Orbitron', sans-serif;
+            font-size: clamp(0.58rem, 2.5vw, 0.72rem);
+            font-weight: 800;
+            letter-spacing: 0.12em;
+            color: #f8fafc;
+            background: rgba(9, 14, 32, 0.7);
+            border: 1px solid rgba(0, 245, 255, 0.4);
+            border-radius: 999px;
+            padding: 7px 14px;
+            white-space: nowrap;
+            opacity: 0;
+            transition: opacity 0.25s ease;
+        }
+
+        #pose-skip.show { opacity: 0.85; }
+
         /* Modal Overlays */
         .overlay-screen {
             position: fixed;
@@ -1005,6 +1067,13 @@
         <p id="banner-subtitle">MIDTOWN PATROL</p>
         <p id="banner-new"></p>
     </div>
+
+    <!-- Corgi close-up caption (start-of-run hello + round-clear celebration) -->
+    <div id="pose-caption">
+        <h2 id="pose-title"></h2>
+        <p id="pose-subtitle"></p>
+    </div>
+    <div id="pose-skip">TAP TO SKIP</div>
 
     <!-- Top Glassmorphism Neon HUD -->
     <div id="hud">
@@ -2430,7 +2499,21 @@
         let shockwaves = [];
 
         // Game State
-        let gameState = 'MENU'; // MENU | PLAYING | ROUND_CLEAR | GAME_OVER
+        let gameState = 'MENU'; // MENU | INTRO | PLAYING | ROUND_CLEAR | GAME_OVER
+
+        // Corgi close-ups: La La faces the camera to say hi before a run (INTRO)
+        // and celebrates after each round clear. Both are short and tap-to-skip.
+        let poseMode = 'none';      // none | intro | celebrate
+        let poseTimer = 0;          // seconds left in the current close-up
+        let poseElapsed = 0;
+        let poseBlend = 0;          // 0 = chase cam from behind, 1 = front close-up
+        let poseConfettiTimer = 0;
+        let introsPlayed = 0;
+        let pendingEndScreen = false;
+        const INTRO_DURATION = 2.6;        // first run of the visit
+        const INTRO_REPLAY_DURATION = 1.5; // shorter on Play Again so replays stay snappy
+        const CELEBRATE_DURATION = 2.2;
+        const POSE_SKIP_GRACE = 0.3;       // ignore the tap that started the run
         let currentRoundIdx = 0;
         let score = 0;
         let ghostsBusted = 0;
@@ -2514,6 +2597,10 @@
         const bannerTitleEl = document.getElementById('banner-title');
         const bannerSubtitleEl = document.getElementById('banner-subtitle');
         const bannerNewEl = document.getElementById('banner-new');
+        const poseCaptionEl = document.getElementById('pose-caption');
+        const poseTitleEl = document.getElementById('pose-title');
+        const poseSubtitleEl = document.getElementById('pose-subtitle');
+        const poseSkipEl = document.getElementById('pose-skip');
 
         const hudEl = document.getElementById('hud');
         const hudScoreEl = document.getElementById('hud-score');
@@ -4682,6 +4769,10 @@
             if (giantStayPuft) giantStayPuft.position.z = cfg.giantZ;
 
             roundBadgeEl.textContent = `ROUND ${cfg.num} • ${cfg.name}`;
+        }
+
+        function showRoundBanner(roundIdx) {
+            const cfg = ROUNDS[roundIdx];
             bannerTitleEl.textContent = `ROUND ${cfg.num}`;
             bannerSubtitleEl.textContent = cfg.fullName;
             if (bannerNewEl) bannerNewEl.textContent = cfg.intro || '';
@@ -4765,9 +4856,25 @@
 
                 startScreenEl.classList.add('hidden');
                 endScreenEl.classList.add('hidden');
-                hudEl.style.display = 'flex';
+                pendingEndScreen = false;
 
-                gameState = 'PLAYING';
+                if (resetRun) {
+                    // La La turns to the camera to say hi, then the run begins
+                    gameState = 'INTRO';
+                    poseMode = 'intro';
+                    poseTimer = introsPlayed === 0 ? INTRO_DURATION : INTRO_REPLAY_DURATION;
+                    poseElapsed = 0;
+                    poseBlend = 1;
+                    introsPlayed++;
+                    hudEl.style.display = 'none';
+                    showPoseCaption('LA LA REPORTING FOR DUTY!', `ROUND ${ROUNDS[roundIdx].num} • ${ROUNDS[roundIdx].fullName}`);
+                } else {
+                    poseMode = 'none';
+                    hidePoseCaption();
+                    hudEl.style.display = 'flex';
+                    gameState = 'PLAYING';
+                    showRoundBanner(roundIdx);
+                }
                 updateHUD();
                 updateEnergyUI();
 
@@ -4778,6 +4885,46 @@
             } catch (err) {
                 console.error('Error starting round:', err);
             }
+        }
+
+        function showPoseCaption(title, subtitle) {
+            poseTitleEl.textContent = title;
+            poseSubtitleEl.textContent = subtitle;
+            poseCaptionEl.classList.add('show');
+            poseSkipEl.classList.add('show');
+        }
+
+        function hidePoseCaption() {
+            poseCaptionEl.classList.remove('show');
+            poseSkipEl.classList.remove('show');
+        }
+
+        function finishIntro() {
+            if (gameState !== 'INTRO') return;
+            poseMode = 'none';
+            poseTimer = 0;
+            hidePoseCaption();
+            hudEl.style.display = 'flex';
+            gameState = 'PLAYING';
+            showRoundBanner(currentRoundIdx);
+        }
+
+        function finishCelebration() {
+            if (poseMode !== 'celebrate') return;
+            poseTimer = 0;
+            hidePoseCaption();
+            if (pendingEndScreen) {
+                pendingEndScreen = false;
+                endScreenEl.classList.remove('hidden');
+            }
+        }
+
+        // Tap / key during a close-up skips it (after a short grace period)
+        function trySkipPose() {
+            if (poseElapsed < POSE_SKIP_GRACE) return false;
+            if (gameState === 'INTRO') { finishIntro(); return true; }
+            if (poseMode === 'celebrate' && pendingEndScreen) { finishCelebration(); return true; }
+            return false;
         }
 
         function triggerEndScreen(roundCleared) {
@@ -4843,7 +4990,24 @@
             endBestEl.textContent = Math.max(best, score).toLocaleString();
 
             renderStarsAndReward(stars, isRunOver);
-            endScreenEl.classList.remove('hidden');
+
+            if (roundCleared) {
+                // La La turns around and celebrates before the results card appears
+                clearEntities();
+                roundBannerEl.classList.remove('show');
+                poseMode = 'celebrate';
+                poseTimer = CELEBRATE_DURATION;
+                poseElapsed = 0;
+                poseConfettiTimer = 0.25;
+                pendingEndScreen = true;
+                showPoseCaption(
+                    isFinalVictory ? 'NYC IS SAFE! GOOD PUP!' : 'GOOD PUP!',
+                    isFinalVictory ? 'ALL 3 ROUNDS CLEARED' : `ROUND ${ROUNDS[currentRoundIdx].num} CLEARED`
+                );
+            } else {
+                poseMode = 'none';
+                endScreenEl.classList.remove('hidden');
+            }
         }
 
         // =====================================================================
@@ -4931,6 +5095,7 @@
             const HOLD_DELAY_MS = 220;
 
             container.addEventListener('pointerdown', (e) => {
+                if (poseMode !== 'none' && trySkipPose()) { e.preventDefault(); return; }
                 if (gameState !== 'PLAYING') return;
                 if (e.target.closest('button') || e.target.closest('input')) return;
                 e.preventDefault();
@@ -5016,6 +5181,7 @@
 
             // Desktop Keyboard Controls
             window.addEventListener('keydown', (e) => {
+                if (poseMode !== 'none' && !e.repeat && trySkipPose()) { e.preventDefault(); return; }
                 if (gameState !== 'PLAYING') return;
                 if (e.code === 'ArrowLeft' || e.code === 'KeyA') {
                     if (!e.repeat) switchLane(-1);
@@ -5075,6 +5241,9 @@
                 endScreenEl.classList.add('hidden');
                 startScreenEl.classList.remove('hidden');
                 gameState = 'MENU';
+                poseMode = 'none';
+                pendingEndScreen = false;
+                hidePoseCaption();
             });
 
         }
@@ -5440,7 +5609,21 @@
                 const feverBoost = inFeverMode ? 1.12 : 1.0;
                 const runSpeed = gameState === 'PLAYING'
                     ? THREE.MathUtils.lerp(cfg.speed, cfg.maxSpeed, progress) * feverBoost
-                    : 10;
+                    : (poseMode !== 'none' ? 0 : 10);
+
+                // Corgi close-up timing (intro hello / round-clear celebration)
+                if (poseMode !== 'none') {
+                    poseElapsed += dt;
+                    if (poseTimer > 0) {
+                        poseTimer -= dt;
+                        if (poseTimer <= 0) {
+                            if (poseMode === 'intro') finishIntro();
+                            else finishCelebration();
+                        }
+                    }
+                }
+                poseBlend = THREE.MathUtils.clamp(poseBlend + (poseMode !== 'none' ? dt : -dt) / 0.5, 0, 1);
+                const poseEase = poseBlend * poseBlend * (3 - 2 * poseBlend);
 
                 // 1. Update Custom Shaders & Scroll Manhattan Avenue
                 if (roadShaderMat) {
@@ -5586,6 +5769,60 @@
                     corgiParts.legs.forEach(leg => {
                         leg.rotation.x = Math.sin(runCycle + leg.userData.phase) * 0.72;
                     });
+                }
+
+                // Close-up poses: turn to face the camera and say hi / celebrate
+                if (poseEase > 0) {
+                    corgiGroup.rotation.y = THREE.MathUtils.lerp(corgiGroup.rotation.y, Math.PI, poseEase);
+                    corgiGroup.rotation.z *= (1 - poseEase);
+                }
+                if (poseMode !== 'none') {
+                    const pt = poseElapsed;
+                    const legs = corgiParts.legs;
+                    corgiParts.tail.rotation.y = Math.sin(pt * 20) * 0.65;   // happy wag
+                    if (poseMode === 'intro') {
+                        corgiParts.bodyPivot.position.y = 0.74 + Math.abs(Math.sin(pt * 5)) * 0.05;
+                        corgiParts.bodyPivot.rotation.x = 0.16;
+                        corgiParts.head.rotation.x = -0.1;
+                        corgiParts.head.rotation.z = Math.sin(pt * 3.2) * 0.24;   // curious head tilt
+                        corgiParts.earL.rotation.z = 0.24 + Math.sin(pt * 6) * 0.1;
+                        corgiParts.earR.rotation.z = -0.24 - Math.sin(pt * 6 + 1) * 0.1;
+                        legs[0].rotation.x = 0;
+                        legs[1].rotation.x = 1.45 + Math.sin(pt * 11) * 0.38; // paw wave
+                        legs[2].rotation.x = 0;
+                        legs[3].rotation.x = 0;
+                    } else {
+                        const hop = Math.abs(Math.sin(pt * 6.5));
+                        corgiGroup.position.y = hop * 0.6;
+                        corgiGroup.scale.set(1 - hop * 0.05, 1 + hop * 0.1, 1);
+                        if (corgiShadowMesh) {
+                            const sh = 1 - hop * 0.3;
+                            corgiShadowMesh.scale.set(sh, sh, 1);
+                        }
+                        corgiParts.bodyPivot.position.y = 0.74;
+                        corgiParts.bodyPivot.rotation.x = 0.32;
+                        corgiParts.head.rotation.x = -0.18;
+                        corgiParts.head.rotation.z = Math.sin(pt * 4) * 0.16;
+                        corgiParts.earL.rotation.z = 0.3 + hop * 0.25;
+                        corgiParts.earR.rotation.z = -0.3 - hop * 0.25;
+                        legs[0].rotation.x = 1.3 + Math.sin(pt * 13) * 0.35;  // both paws up, cheering
+                        legs[1].rotation.x = 1.3 - Math.sin(pt * 13) * 0.35;
+                        legs[2].rotation.x = 0.2;
+                        legs[3].rotation.x = 0.2;
+
+                        poseConfettiTimer -= dt;
+                        if (poseConfettiTimer <= 0) {
+                            poseConfettiTimer = 0.35 + Math.random() * 0.2;
+                            const colors = [0x00f5ff, 0x39ff14, 0xff2a85, 0xffd500, 0xff6b00];
+                            const side = Math.random() < 0.5 ? -1 : 1;
+                            spawnBurstParticles(
+                                new THREE.Vector3(corgiX + side * (1.1 + Math.random() * 0.8), 2.4 + Math.random() * 0.8, -1.2 - Math.random()),
+                                colors[Math.floor(Math.random() * colors.length)], 12, 0.5
+                            );
+                        }
+                    }
+                } else if (poseEase > 0) {
+                    corgiParts.head.rotation.z *= (1 - dt * 8);
                 }
 
                 if (invulnTimer > 0) {
@@ -5972,11 +6209,25 @@
                 camera.position.x = THREE.MathUtils.lerp(camera.position.x, desiredCamX, dt * 6.5) + shakeX;
                 camera.position.y = 4.05 + corgiY * 0.25 + camLookY + shakeY;
                 camera.position.z = 6.9;
-                camera.lookAt(corgiX * 0.35, 1.35 + corgiY * 0.2, -13);
+                if (poseEase > 0) {
+                    // Swing round to a low front close-up (pulled back a bit on narrow phone screens)
+                    const narrow = camera.aspect < 0.8;
+                    const closeZ = narrow ? 5.6 : 4.8;
+                    camera.position.x = THREE.MathUtils.lerp(camera.position.x, corgiX + (narrow ? 0.2 : 0.5), poseEase);
+                    camera.position.y = THREE.MathUtils.lerp(camera.position.y, 2.0, poseEase);
+                    camera.position.z = THREE.MathUtils.lerp(6.9, closeZ, poseEase);
+                    camera.lookAt(
+                        THREE.MathUtils.lerp(corgiX * 0.35, corgiX, poseEase),
+                        THREE.MathUtils.lerp(1.35 + corgiY * 0.2, 1.55, poseEase),
+                        THREE.MathUtils.lerp(-13, 0, poseEase)
+                    );
+                } else {
+                    camera.lookAt(corgiX * 0.35, 1.35 + corgiY * 0.2, -13);
+                }
 
                 const targetRoll = THREE.MathUtils.clamp(-corgiVelX * 0.0085, -0.065, 0.065);
                 camRoll = THREE.MathUtils.lerp(camRoll, targetRoll, dt * 10);
-                camera.rotation.z += camRoll;
+                camera.rotation.z += camRoll * (1 - poseEase);
 
                 renderer.render(scene, camera);
             } catch (err) {
