@@ -710,6 +710,27 @@
 
         .overlay-screen.hidden { display: none !important; }
 
+        /* Round clear: keep the celebrating corgi visible beside (desktop) or above (phone) the results card */
+        #end-screen.celebrating {
+            background: radial-gradient(circle at center, rgba(12, 18, 44, 0.08) 0%, rgba(4, 6, 16, 0.32) 100%);
+            backdrop-filter: none;
+            -webkit-backdrop-filter: none;
+        }
+
+        @media (min-aspect-ratio: 1/1) and (min-width: 760px) {
+            #end-screen.celebrating {
+                justify-content: flex-end;
+                padding-right: max(16px, 7vw);
+            }
+        }
+
+        @media (max-aspect-ratio: 1/1), (max-width: 759px) {
+            #end-screen.celebrating {
+                align-items: flex-end;
+                padding-bottom: max(16px, env(safe-area-inset-bottom));
+            }
+        }
+
         .modal-card {
             width: 100%;
             max-width: 445px;
@@ -2519,6 +2540,9 @@
         let poseConfettiTimer = 0;
         let introsPlayed = 0;
         let pendingEndScreen = false;
+        // Camera framing that moves the celebrating corgi into the space the results card leaves free
+        let viewOffX = 0, viewOffY = 0, viewZoom = 1, viewAdjActive = false;
+        const _projTmp = new THREE.Vector3();
         const INTRO_DURATION = 2.6;        // first run of the visit
         const INTRO_REPLAY_DURATION = 1.5; // shorter on Play Again so replays stay snappy
         const CELEBRATE_DURATION = 2.2;
@@ -3406,6 +3430,8 @@
             });
 
             corgiParts.legs = [];
+            const pawPadGeo = new THREE.SphereGeometry(0.055, 10, 8);
+            const pawPadMat = new THREE.MeshStandardMaterial({ color: 0xff8fb8, roughness: 0.55 });
             const legCoords = [
                 { x: -0.30, z: -0.52, phase: 0, isFront: true },
                 { x:  0.30, z: -0.52, phase: 0.45, isFront: true },
@@ -3416,17 +3442,32 @@
                 const legPivot = new THREE.Group();
                 legPivot.position.set(lc.x, -0.18, lc.z);
 
-                const sleeve = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.26, 0.24), jumpsuitMat);
+                // Soft rounded leg: puffy jumpsuit cuff, short furry leg, round white paw with pink toe beans
+                const sleeve = new THREE.Mesh(new THREE.SphereGeometry(0.135, 14, 12), jumpsuitMat);
+                sleeve.scale.set(1, 1.15, 1);
                 sleeve.position.y = -0.12;
                 legPivot.add(sleeve);
 
-                const lowerLeg = new THREE.Mesh(new THREE.BoxGeometry(0.20, 0.20, 0.20), furDark);
-                lowerLeg.position.y = -0.32;
+                const lowerLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.11, 0.22, 14), furTan);
+                lowerLeg.position.y = -0.3;
                 legPivot.add(lowerLeg);
 
-                const paw = new THREE.Mesh(new THREE.BoxGeometry(0.23, 0.13, 0.28), furWhite);
-                paw.position.set(0, -0.46, -0.04);
+                const paw = new THREE.Mesh(new THREE.SphereGeometry(0.14, 16, 12), furWhite);
+                paw.scale.set(1, 0.68, 1.15);
+                paw.position.set(0, -0.43, -0.04);
                 legPivot.add(paw);
+
+                const padY = -0.43 - 0.14 * 0.68 + 0.012;
+                const mainPad = new THREE.Mesh(pawPadGeo, pawPadMat);
+                mainPad.scale.set(1.15, 0.35, 1);
+                mainPad.position.set(0, padY, 0.0);
+                legPivot.add(mainPad);
+                [-0.065, 0, 0.065].forEach((tx, ti) => {
+                    const bean = new THREE.Mesh(pawPadGeo, pawPadMat);
+                    bean.scale.set(0.48, 0.3, 0.48);
+                    bean.position.set(tx, padY + 0.008, -0.105 - (ti === 1 ? 0.02 : 0));
+                    legPivot.add(bean);
+                });
 
                 legPivot.userData.phase = lc.phase;
                 legPivot.userData.isFront = lc.isFront;
@@ -4950,6 +4991,54 @@
             poseSkipEl.classList.remove('show');
         }
 
+        // While the results card is up after a round clear, shift and shrink the view so the
+        // celebrating corgi sits in the free space: left of the card on desktop, above it on phone.
+        function updateCelebrationFraming(dt) {
+            let tX = 0, tY = 0, tZ = 1;
+            const W = Math.max(1, window.innerWidth), H = Math.max(1, window.innerHeight);
+            const showing = poseMode === 'celebrate' && !endScreenEl.classList.contains('hidden');
+            if (showing || viewAdjActive) {
+                camera.clearViewOffset();
+                camera.zoom = 1;
+                camera.updateProjectionMatrix();
+            }
+            if (showing) {
+                camera.updateMatrixWorld();
+                const toPx = (y) => {
+                    _projTmp.set(corgiX, y, 0).project(camera);
+                    return { x: (_projTmp.x + 1) * 0.5 * W, y: (1 - _projTmp.y) * 0.5 * H };
+                };
+                const top = toPx(3.1), bottom = toPx(-0.1);   // ears at the top of a hop, down to the paws
+                const mid = { x: (top.x + bottom.x) / 2, y: (top.y + bottom.y) / 2 };
+                const corgiH = Math.max(1, bottom.y - top.y);
+                const card = endScreenEl.querySelector('.modal-card').getBoundingClientRect();
+                let region;
+                if (card.left > 220) region = { x0: 0, x1: card.left, y0: 0, y1: H };   // desktop: left of card
+                else region = { x0: 0, x1: W, y0: 0, y1: Math.max(80, card.top) };      // phone: above card
+                const rW = region.x1 - region.x0, rH = region.y1 - region.y0;
+                tZ = Math.max(0.3, Math.min(1, (rH * 0.82) / corgiH, (rW * 0.8) / (corgiH * 0.6)));
+                const targetX = (region.x0 + region.x1) / 2;
+                const targetY = (region.y0 + region.y1) / 2;
+                // Zoom scales around the screen centre, then the view offset slides the image
+                tX = (W / 2 + (mid.x - W / 2) * tZ) - targetX;
+                tY = (H / 2 + (mid.y - H / 2) * tZ) - targetY;
+            }
+            const k = Math.min(1, dt * 6);
+            viewOffX += (tX - viewOffX) * k;
+            viewOffY += (tY - viewOffY) * k;
+            viewZoom += (tZ - viewZoom) * k;
+            viewAdjActive = showing || Math.abs(viewOffX) > 0.5 || Math.abs(viewOffY) > 0.5 || Math.abs(viewZoom - 1) > 0.002;
+            if (viewAdjActive) {
+                camera.zoom = viewZoom;
+                camera.setViewOffset(W, H, viewOffX, viewOffY, W, H);
+            } else if (showing === false && (viewOffX || viewOffY || viewZoom !== 1)) {
+                viewOffX = 0; viewOffY = 0; viewZoom = 1;
+                camera.clearViewOffset();
+                camera.zoom = 1;
+                camera.updateProjectionMatrix();
+            }
+        }
+
         function finishIntro() {
             if (gameState !== 'INTRO') return;
             poseMode = 'none';
@@ -4966,6 +5055,7 @@
             hidePoseCaption();
             if (pendingEndScreen) {
                 pendingEndScreen = false;
+                endScreenEl.classList.add('celebrating');
                 endScreenEl.classList.remove('hidden');
             }
         }
@@ -5057,6 +5147,7 @@
                 );
             } else {
                 poseMode = 'none';
+                endScreenEl.classList.remove('celebrating');
                 endScreenEl.classList.remove('hidden');
             }
         }
@@ -6285,6 +6376,7 @@
                 const targetRoll = THREE.MathUtils.clamp(-corgiVelX * 0.0085, -0.065, 0.065);
                 camRoll = THREE.MathUtils.lerp(camRoll, targetRoll, dt * 10);
                 camera.rotation.z += camRoll * (1 - poseEase);
+                updateCelebrationFraming(dt);
 
                 renderer.render(scene, camera);
             } catch (err) {
