@@ -1241,7 +1241,7 @@
                 maxSpeed: 35,
                 spawnInterval: 0.62,
                 ghostChance: 0.44,
-                powerupChance: 0.16,
+                powerupChance: 0.12,
                 bossChance: 0.22,
                 bossHp: 0.72,
                 bossSpeedMult: 0.92, // how fast the cat marshmallow walks at you, relative to the road
@@ -1254,6 +1254,7 @@
                 splitterChance: 0,   // share of ghosts that are pink Splitters (pop into 2 mini ghosts)
                 chargerChance: 0,    // share of ghosts that are red Chargers (flash a lane warning, then dash)
                 newEnemy: null,      // enemy introduced this round (forced once early so players meet it)
+                boost: 'overcharge',  // this round's blaster boost (guaranteed drops below)
                 powerups: ['overcharge', 'shield', 'double'],
                 intro: '',
                 giantZ: -112,
@@ -1272,7 +1273,7 @@
                 maxSpeed: 40,
                 spawnInterval: 0.54,
                 ghostChance: 0.46,
-                powerupChance: 0.15,
+                powerupChance: 0.14,
                 bossChance: 0.25,
                 bossHp: 0.8,
                 bossSpeedMult: 0.78,
@@ -1285,7 +1286,8 @@
                 splitterChance: 0.18,
                 chargerChance: 0,
                 newEnemy: 'splitter',
-                powerups: ['overcharge', 'shield', 'double', 'widebeam'],
+                boost: 'widebeam',
+                powerups: ['widebeam', 'shield', 'double'],
                 intro: 'NEW: SPLITTER GHOSTS • WIDE BEAM POWER-UP',
                 giantZ: -96,
                 fogColor: 0x1e0934,
@@ -1303,7 +1305,7 @@
                 maxSpeed: 45,
                 spawnInterval: 0.43,
                 ghostChance: 0.48,
-                powerupChance: 0.11,
+                powerupChance: 0.09,
                 bossChance: 0.30,
                 bossHp: 0.9,
                 bossSpeedMult: 0.68,
@@ -1316,7 +1318,8 @@
                 splitterChance: 0.10,
                 chargerChance: 0.12,
                 newEnemy: 'charger',
-                powerups: ['overcharge', 'shield', 'double', 'widebeam', 'chain'],
+                boost: 'chain',
+                powerups: ['chain', 'shield', 'double'],
                 intro: 'NEW: CHARGER GHOSTS • CHAIN LIGHTNING POWER-UP',
                 giantZ: -84,
                 fogColor: 0x0e1d22,
@@ -2567,6 +2570,10 @@
         let wideBeamTimer = 0;      // Round 2+: beam also hits the lanes on either side
         let chainTimer = 0;         // Round 3: busts arc lightning to nearby ghosts
         let firstNewEnemySpawned = false;
+        let boostDropsSpawned = 0;
+        // Each round's blaster boost drops twice for sure: once in your lane early on so you
+        // learn it, then again in a random lane as the round speeds up toward the finish.
+        const BOOST_DROP_TIMES = [5.0, 18.0];
         const WIDE_BEAM_DURATION = 5.0;
         const CHAIN_DURATION = 5.0;
 
@@ -4911,6 +4918,7 @@
                 wideBeamTimer = 0;
                 chainTimer = 0;
                 firstNewEnemySpawned = false;
+                boostDropsSpawned = 0;
                 combo = 0;
                 comboTimer = 0;
                 setFeverState(false);
@@ -5418,6 +5426,14 @@
             });
         }
 
+        function makePowerupEntity(puType, lane, z) {
+            const x = LANE_X[lane];
+            const mesh = createPowerupMesh(puType);
+            mesh.position.set(x, 0, z);
+            scene.add(mesh);
+            return { kind: 'powerup', puType, lane, x, z, mesh, hitRadius: 1.1 };
+        }
+
         function makeGhostEntity(subType, lane, z) {
             const x = LANE_X[lane];
             let mesh, ent;
@@ -5474,6 +5490,14 @@
                 return;
             }
 
+            if (!hazardOnly && cfg.boost && boostDropsSpawned < BOOST_DROP_TIMES.length
+                && roundElapsed >= BOOST_DROP_TIMES[boostDropsSpawned]) {
+                const boostLane = boostDropsSpawned === 0 ? currentLane : Math.floor(Math.random() * 5);
+                boostDropsSpawned++;
+                entities.push(makePowerupEntity(cfg.boost, boostLane, -96));
+                return;
+            }
+
             const lane = forcedLane !== null ? forcedLane : Math.floor(Math.random() * 5);
             const x = LANE_X[lane];
             const z = -96;
@@ -5485,10 +5509,7 @@
                 const puChoices = cfg.powerups.slice();
                 if (lives < 3) for (let m = 0; m < cfg.medboneWeight; m++) puChoices.push('medbone');
                 const puType = puChoices[Math.floor(Math.random() * puChoices.length)];
-                const mesh = createPowerupMesh(puType);
-                mesh.position.set(x, 0, z);
-                scene.add(mesh);
-                entity = { kind: 'powerup', puType, lane, x, z, mesh, hitRadius: 1.1 };
+                entity = makePowerupEntity(puType, lane, z);
             }
             // 2) Spectral Ghosts & Stay Puft Mini-Bosses
             else if (roll < cfg.powerupChance + cfg.ghostChance) {

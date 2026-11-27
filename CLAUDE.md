@@ -9,7 +9,8 @@ The game exists to **grow the @lalacorgi.studios Instagram** and **drive traffic
 - The corgi character is named **Ghostbarker** (La La Corgi Studios is the brand, not the character). Keep the corgi cute: big round head, big sparkly eyes, blush, little smile.
 - A run opens with a short, skippable close-up of Ghostbarker facing the camera, and each round clear shows Ghostbarker celebrating before the results card.
 - The marshmallow boss is a **feline** marshmallow (cat ears, slit-pupil eyes, whiskers, toe beans, curly tail). Keep it a cat.
-- Each round adds one new ghost and one blaster power-up: Round 2 = pink **Splitter** ghost (pops into 2 minis) + **Wide Beam** (hits neighboring lanes); Round 3 = red **Charger** ghost (flashes a lane warning, then dashes) + **Chain Lightning** (busts arc to 2 nearby ghosts). Upgrades last 5s and reset each round. Tunables live in each `ROUNDS` entry (`splitterChance`, `chargerChance`, `powerups`, `intro`).
+- Each round adds one new ghost and one blaster power-up: Round 2 = pink **Splitter** ghost (pops into 2 minis) + **Wide Beam** (hits neighboring lanes); Round 3 = red **Charger** ghost (flashes a lane warning, then dashes) + **Chain Lightning** (busts arc to 2 nearby ghosts). Upgrades last 5s and reset each round.
+- **One blaster boost per round** (`boost` in `ROUNDS`): Overcharge in R1, Wide Beam in R2, Chain Lightning in R3. Shield, 2X Frenzy and Med-Bone appear in every round. Each round's boost drops twice for sure (`BOOST_DROP_TIMES`: in the player's lane at 5s, in a random lane at 18s), plus random drops. Tunables live in each `ROUNDS` entry (`splitterChance`, `chargerChance`, `boost`, `powerups`, `intro`).
 - End screen shows **1–3 stars**: lose in Round 1 = 1★, lose in Round 2 or 3 = 2★, clear all 3 rounds = 3★.
 - **3 stars unlocks a merch discount code** (tap to copy). Fewer stars shows a locked teaser.
 - End screen buttons: Shop Merch, Follow La La (Instagram), Play Again, Share, Main Menu.
