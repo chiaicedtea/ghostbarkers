@@ -710,6 +710,13 @@
 
         .overlay-screen.hidden { display: none !important; }
 
+        /* Results card arrives with a short lock so excited gameplay taps can't hit a button by accident */
+        #end-screen .modal-card { transition: opacity 0.35s ease, transform 0.35s ease; }
+        #end-screen.arming .modal-card { opacity: 0.55; transform: translateY(10px) scale(0.97); }
+        #end-screen.arming .modal-card a,
+        #end-screen.arming .modal-card button { pointer-events: none; }
+        #end-screen.arming { pointer-events: none; }
+
         /* Round clear: keep the celebrating corgi visible beside (desktop) or above (phone) the results card */
         #end-screen.celebrating {
             background: radial-gradient(circle at center, rgba(12, 18, 44, 0.08) 0%, rgba(4, 6, 16, 0.32) 100%);
@@ -2544,6 +2551,9 @@
         const INTRO_REPLAY_DURATION = 1.5; // shorter on Play Again so replays stay snappy
         const CELEBRATE_DURATION = 2.2;
         const POSE_SKIP_GRACE = 0.3;       // ignore the tap that started the run
+        const CELEBRATE_SKIP_GRACE = 1.0;  // gameplay taps carry on past the round end, so don't let them skip right away
+        const END_CARD_LOCK_MS = 1000;     // results buttons ignore taps this long after the card appears
+        let endCardLockTimeout = null;
         let currentRoundIdx = 0;
         let score = 0;
         let ghostsBusted = 0;
@@ -5053,15 +5063,26 @@
             if (pendingEndScreen) {
                 pendingEndScreen = false;
                 endScreenEl.classList.add('celebrating');
-                endScreenEl.classList.remove('hidden');
+                showEndCard();
             }
+        }
+
+        // Show the results card locked and faded for a moment, then unlock its buttons
+        function showEndCard() {
+            if (endCardLockTimeout) clearTimeout(endCardLockTimeout);
+            endScreenEl.classList.add('arming');
+            endScreenEl.classList.remove('hidden');
+            endCardLockTimeout = setTimeout(() => {
+                endScreenEl.classList.remove('arming');
+                endCardLockTimeout = null;
+            }, END_CARD_LOCK_MS);
         }
 
         // Tap / key during a close-up skips it (after a short grace period)
         function trySkipPose() {
             if (poseElapsed < POSE_SKIP_GRACE) return false;
             if (gameState === 'INTRO') { finishIntro(); return true; }
-            if (poseMode === 'celebrate' && pendingEndScreen) { finishCelebration(); return true; }
+            if (poseMode === 'celebrate' && pendingEndScreen && poseElapsed >= CELEBRATE_SKIP_GRACE) { finishCelebration(); return true; }
             return false;
         }
 
@@ -5145,7 +5166,7 @@
             } else {
                 poseMode = 'none';
                 endScreenEl.classList.remove('celebrating');
-                endScreenEl.classList.remove('hidden');
+                showEndCard();
             }
         }
 
