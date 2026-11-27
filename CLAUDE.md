@@ -21,6 +21,9 @@ The game exists to **grow the @lalacorgi.studios Instagram** and **drive traffic
 
 ## Working across two computers
 The project lives at `C:\LaLaCorgi\Games` on each computer and syncs through GitHub.
+- Repo: https://github.com/chiaicedtea/ghostbarkers (public, account `chiaicedtea`)
+- Live game (GitHub Pages): https://chiaicedtea.github.io/ghostbarkers/ — a custom domain like play.lalacorgi.com may be added later
+- Second-computer setup steps: `SETUP-OTHER-COMPUTER.md`
 - Start of a session: pull the latest from GitHub.
 - End of a session: commit and push.
 - The game is published with GitHub Pages from the `main` branch.
