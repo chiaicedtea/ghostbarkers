@@ -1132,6 +1132,8 @@
                 bossHp: 0.72,
                 phantomChance: 0.14,
                 taxiChance: 0.20,
+                pairChance: 0,       // chance a second hazard spawns alongside in another lane
+                medboneWeight: 2,    // how strongly power-ups favor the +1 life bone when hurt
                 giantZ: -112,
                 fogColor: 0x091622,
                 skyColor: 0x050b16,
@@ -1145,14 +1147,16 @@
                 fullName: 'TIMES SQUARE SURGE • 30s',
                 bpm: 124,
                 speed: 32,
-                maxSpeed: 42,
-                spawnInterval: 0.50,
+                maxSpeed: 43,
+                spawnInterval: 0.48,
                 ghostChance: 0.46,
-                powerupChance: 0.16,
+                powerupChance: 0.13,
                 bossChance: 0.25,
-                bossHp: 0.85,
-                phantomChance: 0.42,
+                bossHp: 0.95,
+                phantomChance: 0.40,
                 taxiChance: 0.34,
+                pairChance: 0.18,
+                medboneWeight: 1,
                 giantZ: -96,
                 fogColor: 0x1e0934,
                 skyColor: 0x120522,
@@ -1165,15 +1169,17 @@
                 name: 'CENTRAL PARK',
                 fullName: 'CENTRAL PARK VORTEX • 30s',
                 bpm: 130,
-                speed: 37,
-                maxSpeed: 47,
-                spawnInterval: 0.43,
+                speed: 39,
+                maxSpeed: 52,
+                spawnInterval: 0.40,
                 ghostChance: 0.48,
-                powerupChance: 0.16,
+                powerupChance: 0.09,
                 bossChance: 0.30,
-                bossHp: 1.0,
-                phantomChance: 0.38,
-                taxiChance: 0.38,
+                bossHp: 1.3,
+                phantomChance: 0.46,
+                taxiChance: 0.42,
+                pairChance: 0.50,
+                medboneWeight: 1,
                 giantZ: -84,
                 fogColor: 0x0e1d22,
                 skyColor: 0x08111b,
@@ -4471,24 +4477,25 @@
             });
         }
 
-        function spawnEntity() {
+        // hazardOnly: used for the paired second spawn in later rounds (no power-ups, no boss)
+        function spawnEntity(forcedLane = null, hazardOnly = false) {
             const cfg = ROUNDS[currentRoundIdx];
 
-            if (!firstBossSpawned && roundElapsed >= 6.5) {
+            if (!hazardOnly && !firstBossSpawned && roundElapsed >= 6.5) {
                 spawnStayPuftMiniBoss(currentLane);
                 return;
             }
 
-            const lane = Math.floor(Math.random() * 5);
+            const lane = forcedLane !== null ? forcedLane : Math.floor(Math.random() * 5);
             const x = LANE_X[lane];
             const z = -96;
-            const roll = Math.random();
+            const roll = hazardOnly ? cfg.powerupChance + Math.random() * (1 - cfg.powerupChance) : Math.random();
             let entity;
 
             // 1) 4 Colorful Power-Ups
             if (roll < cfg.powerupChance) {
                 const puChoices = ['overcharge', 'shield', 'double'];
-                if (lives < 3) puChoices.push('medbone', 'medbone');
+                if (lives < 3) for (let m = 0; m < cfg.medboneWeight; m++) puChoices.push('medbone');
                 const puType = puChoices[Math.floor(Math.random() * puChoices.length)];
                 const mesh = createPowerupMesh(puType);
                 mesh.position.set(x, 0, z);
@@ -4498,7 +4505,7 @@
             // 2) Spectral Ghosts & Stay Puft Mini-Bosses
             else if (roll < cfg.powerupChance + cfg.ghostChance) {
                 const gRoll = Math.random();
-                if (gRoll < cfg.bossChance && (roundElapsed >= 3.5 || currentRoundIdx > 0)) {
+                if (!hazardOnly && gRoll < cfg.bossChance && (roundElapsed >= 3.5 || currentRoundIdx > 0)) {
                     spawnStayPuftMiniBoss(lane);
                     return;
                 } else if (gRoll < cfg.bossChance + cfg.phantomChance) {
@@ -4574,6 +4581,13 @@
             }
 
             entities.push(entity);
+
+            // Later rounds: sometimes a second hazard arrives side by side in another lane,
+            // so fewer lanes are safe. Always at least 3 lanes stay open.
+            if (!hazardOnly && Math.random() < cfg.pairChance) {
+                const other = (lane + 1 + Math.floor(Math.random() * 4)) % 5;
+                spawnEntity(other, true);
+            }
         }
 
         function handlePlayerHit(hitEnt = null) {
