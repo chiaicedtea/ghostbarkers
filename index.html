@@ -3315,56 +3315,229 @@
             scene.add(corgiGroup);
         }
 
+        // Soft radial glow + 4-point flare textures (drawn once on a canvas, shared by all beam sprites)
+        function makeGlowTexture(size, stops) {
+            const c = document.createElement('canvas');
+            c.width = c.height = size;
+            const g = c.getContext('2d');
+            const grd = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+            stops.forEach(([o, col]) => grd.addColorStop(o, col));
+            g.fillStyle = grd;
+            g.fillRect(0, 0, size, size);
+            return new THREE.CanvasTexture(c);
+        }
+
+        function makeFlareTexture(size) {
+            const c = document.createElement('canvas');
+            c.width = c.height = size;
+            const g = c.getContext('2d');
+            const h = size / 2;
+            g.globalCompositeOperation = 'lighter';
+            const drawRay = (w, len, alpha) => {
+                const grd = g.createLinearGradient(h - len, 0, h + len, 0);
+                grd.addColorStop(0, 'rgba(255,255,255,0)');
+                grd.addColorStop(0.5, `rgba(255,255,255,${alpha})`);
+                grd.addColorStop(1, 'rgba(255,255,255,0)');
+                g.fillStyle = grd;
+                g.beginPath();
+                g.moveTo(h - len, h);
+                g.lineTo(h, h - w);
+                g.lineTo(h + len, h);
+                g.lineTo(h, h + w);
+                g.closePath();
+                g.fill();
+            };
+            g.save(); g.translate(h, h);
+            for (let k = 0; k < 4; k++) {
+                g.rotate(k === 0 ? 0 : Math.PI / 4);
+                g.save(); g.translate(-h, -h);
+                drawRay(k % 2 === 0 ? size * 0.045 : size * 0.025, k % 2 === 0 ? h : h * 0.6, k % 2 === 0 ? 1.0 : 0.6);
+                g.restore();
+            }
+            g.restore();
+            const core = g.createRadialGradient(h, h, 0, h, h, h * 0.35);
+            core.addColorStop(0, 'rgba(255,255,255,1)');
+            core.addColorStop(1, 'rgba(255,255,255,0)');
+            g.fillStyle = core;
+            g.fillRect(0, 0, size, size);
+            return new THREE.CanvasTexture(c);
+        }
+
+        const BEAM_MOTE_COUNT = 56;
+        let beamGlowMat, beamHazeMat, beamArc3, muzzleGlow, muzzleFlare, impactFlare, impactFlare2, impactCore;
+        let beamMotes, beamMoteData = [], beamLastT = -1;
+
         function buildProtonBeam() {
             beamGroup = new THREE.Group();
             const segs = 28;
-            const makeLine = (color) => {
+            const makeLine = (color, opacity = 1) => {
                 const pos = new Float32Array(segs * 3);
                 const geo = new THREE.BufferGeometry();
                 geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-                return new THREE.Line(geo, new THREE.LineBasicMaterial({ color }));
+                const line = new THREE.Line(geo, new THREE.LineBasicMaterial({
+                    color, transparent: true, opacity,
+                    blending: THREE.AdditiveBlending, depthWrite: false
+                }));
+                line.frustumCulled = false;
+                return line;
             };
 
+            const glowTex = makeGlowTexture(64, [
+                [0, 'rgba(255,255,255,1)'], [0.22, 'rgba(255,255,255,0.75)'],
+                [0.5, 'rgba(255,255,255,0.22)'], [1, 'rgba(255,255,255,0)']
+            ]);
+            const flareTex = makeFlareTexture(128);
+
+            // Hot white core
             beamCore = new THREE.Mesh(
-                new THREE.CylinderGeometry(0.075, 0.11, 1, 8),
-                new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.96 })
+                new THREE.CylinderGeometry(0.06, 0.09, 1, 8, 1, true),
+                new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.98 })
             );
             beamGroup.add(beamCore);
 
-            beamArc1 = makeLine(0xff6b00);
+            // Energy sheath: additive shader with soft edges and pulses racing down the stream
+            const makeSheathMat = (inner, outer, strength, speed) => new THREE.ShaderMaterial({
+                uniforms: {
+                    uTime: { value: 0 },
+                    uLen: { value: 10 },
+                    uInner: { value: new THREE.Color(inner) },
+                    uOuter: { value: new THREE.Color(outer) },
+                    uStrength: { value: strength },
+                    uSpeed: { value: speed },
+                    uTipFade: { value: 1 }
+                },
+                vertexShader: `
+                    varying vec2 vUv;
+                    varying float vFacing;
+                    void main() {
+                        vUv = uv;
+                        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+                        vec3 n = normalize(normalMatrix * normal);
+                        vec3 axis = normalize((modelViewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
+                        vec3 v = normalize(-mv.xyz);
+                        vec3 vPerp = v - axis * dot(v, axis);
+                        vFacing = abs(dot(n, normalize(vPerp + vec3(1e-5))));
+                        gl_Position = projectionMatrix * mv;
+                    }`,
+                fragmentShader: `
+                    uniform float uTime, uLen, uStrength, uSpeed, uTipFade;
+                    uniform vec3 uInner, uOuter;
+                    varying vec2 vUv;
+                    varying float vFacing;
+                    void main() {
+                        float edge = pow(vFacing, 1.6);
+                        float d = vUv.y * uLen;
+                        float pulse = 0.55 + 0.45 * sin(d * 2.2 - uTime * uSpeed);
+                        float ripple = 0.75 + 0.25 * sin(d * 7.0 - uTime * uSpeed * 1.7 + vUv.x * 12.566);
+                        float startFade = smoothstep(0.0, 0.6 / max(uLen, 0.6), vUv.y);
+                        float endFade = mix(1.0, 1.0 - smoothstep(0.7, 1.0, vUv.y), uTipFade);
+                        vec3 col = mix(uOuter, uInner, edge * pulse);
+                        float a = edge * pulse * ripple * startFade * endFade * uStrength;
+                        gl_FragColor = vec4(col * a, a);
+                    }`,
+                transparent: true,
+                depthWrite: false,
+                blending: THREE.AdditiveBlending,
+                side: THREE.DoubleSide
+            });
+
+            beamGlowMat = makeSheathMat(0xbfffff, 0x00c8ff, 1.15, 26);
+            const glow = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.4, 1, 12, 1, true), beamGlowMat);
+            glow.userData.isSheath = true;
+            beamGroup.add(glow);
+
+            beamHazeMat = makeSheathMat(0xffb347, 0xff4d00, 0.8, 14);
+            const haze = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.78, 1, 12, 1, true), beamHazeMat);
+            haze.userData.isSheath = true;
+            beamGroup.add(haze);
+
+            beamArc1 = makeLine(0xff8a1f);
             beamArc2 = makeLine(0x00f5ff);
+            beamArc3 = makeLine(0xe0f7ff, 0.85);
             beamGroup.add(beamArc1);
             beamGroup.add(beamArc2);
+            beamGroup.add(beamArc3);
 
-            muzzleFlash = new THREE.Mesh(
-                new THREE.SphereGeometry(0.34, 8, 8),
-                new THREE.MeshBasicMaterial({ color: 0x00f5ff, transparent: true, opacity: 0.92 })
-            );
+            const spriteMat = (color, opacity, map) => new THREE.SpriteMaterial({
+                map, color, transparent: true, opacity,
+                blending: THREE.AdditiveBlending, depthWrite: false
+            });
+
+            // Muzzle: soft glow + spinning star flare
+            muzzleFlash = new THREE.Group();
+            muzzleGlow = new THREE.Sprite(spriteMat(0x40f8ff, 0.95, glowTex));
+            muzzleFlare = new THREE.Sprite(spriteMat(0xffffff, 0.9, flareTex));
+            muzzleFlash.add(muzzleGlow);
+            muzzleFlash.add(muzzleFlare);
             beamGroup.add(muzzleFlash);
 
-            impactGlow = new THREE.Mesh(
-                new THREE.SphereGeometry(0.58, 10, 10),
-                new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.88 })
-            );
+            // Impact: hot core, big orange bloom and two counter-spinning flares
+            impactGlow = new THREE.Group();
+            const impactBloom = new THREE.Sprite(spriteMat(0xff9a1f, 0.9, glowTex));
+            impactBloom.scale.set(3.4, 3.4, 1);
+            impactCore = new THREE.Sprite(spriteMat(0xffffff, 1.0, glowTex));
+            impactFlare = new THREE.Sprite(spriteMat(0xffe08a, 0.95, flareTex));
+            impactFlare2 = new THREE.Sprite(spriteMat(0x7ffcff, 0.7, flareTex));
+            impactGlow.add(impactBloom);
+            impactGlow.add(impactCore);
+            impactGlow.add(impactFlare);
+            impactGlow.add(impactFlare2);
             beamGroup.add(impactGlow);
+
+            // Energy motes shed by the stream (one draw call, fixed pool)
+            const motePos = new Float32Array(BEAM_MOTE_COUNT * 3);
+            const moteGeo = new THREE.BufferGeometry();
+            moteGeo.setAttribute('position', new THREE.BufferAttribute(motePos, 3));
+            beamMotes = new THREE.Points(moteGeo, new THREE.PointsMaterial({
+                map: glowTex, color: 0x9ffcff, size: 0.34, sizeAttenuation: true,
+                transparent: true, opacity: 0.95,
+                blending: THREE.AdditiveBlending, depthWrite: false
+            }));
+            beamMotes.frustumCulled = false;
+            for (let i = 0; i < BEAM_MOTE_COUNT; i++) {
+                beamMoteData.push({ life: 0, t: 0, ox: 0, oy: 0, vx: 0, vy: 0, vz: 0, z: 0 });
+                motePos[i * 3 + 1] = -100;
+            }
+            beamGroup.add(beamMotes);
 
             beamGroup.visible = false;
             scene.add(beamGroup);
         }
 
         function updateLiveProtonBeam(startPos, endPos, hasImpact, tSec) {
+            const wasVisible = beamGroup.visible;
             beamGroup.visible = true;
+            const dt = (beamLastT < 0 || !wasVisible) ? 0.016 : Math.min(0.05, Math.max(0, tSec - beamLastT));
+            beamLastT = tSec;
             const isOver = overchargeTimer > 0;
             const coreThickness = isOver ? 1.85 : 1.0;
 
             const dir = new THREE.Vector3().subVectors(endPos, startPos);
             const len = Math.max(0.5, dir.length());
             const mid = new THREE.Vector3().addVectors(startPos, endPos).multiplyScalar(0.5);
+            const dirN = dir.clone().normalize();
+            const quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dirN);
+            const throb = 1.0 + Math.sin(tSec * 31) * 0.07 + (Math.random() - 0.5) * 0.08;
 
             beamCore.position.copy(mid);
-            beamCore.scale.set(coreThickness, len, coreThickness);
-            beamCore.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
-            beamCore.material.color.setHex(isOver ? 0x00f5ff : 0xffffff);
+            beamCore.scale.set(coreThickness * throb, len, coreThickness * throb);
+            beamCore.quaternion.copy(quat);
+            beamCore.material.color.setHex(isOver ? 0xcffcff : 0xffffff);
+
+            beamGroup.children.forEach(ch => {
+                if (!ch.userData.isSheath) return;
+                ch.position.copy(mid);
+                ch.quaternion.copy(quat);
+                const w = coreThickness * throb * (ch.material === beamHazeMat ? (0.9 + Math.sin(tSec * 13) * 0.12) : 1.0);
+                ch.scale.set(w, len, w);
+                ch.material.uniforms.uTime.value = tSec;
+                ch.material.uniforms.uLen.value = len;
+                ch.material.uniforms.uTipFade.value = hasImpact ? 0.0 : 1.0;
+            });
+            beamGlowMat.uniforms.uStrength.value = isOver ? 1.6 : 1.15;
+            beamHazeMat.uniforms.uStrength.value = isOver ? 1.1 : 0.8;
+            beamHazeMat.uniforms.uInner.value.setHex(isOver ? 0x9ffcff : 0xffb347);
+            beamHazeMat.uniforms.uOuter.value.setHex(isOver ? 0x00a2ff : 0xff4d00);
 
             const updateHelixArc = (line, phaseOffset, radius, jitter) => {
                 const arr = line.geometry.attributes.position.array;
@@ -3385,16 +3558,72 @@
             updateHelixArc(beamArc1, 0, isOver ? 0.52 : 0.34, 0.44);
             updateHelixArc(beamArc2, Math.PI, isOver ? 0.62 : 0.42, 0.50);
 
+            // Crackling lightning filament: jagged, re-rolled every frame
+            {
+                const arr = beamArc3.geometry.attributes.position.array;
+                const count = arr.length / 3;
+                const amp = isOver ? 0.7 : 0.46;
+                for (let i = 0; i < count; i++) {
+                    const t = i / (count - 1);
+                    const env = Math.sin(t * Math.PI);
+                    arr[i * 3]     = THREE.MathUtils.lerp(startPos.x, endPos.x, t) + (Math.random() - 0.5) * amp * env;
+                    arr[i * 3 + 1] = THREE.MathUtils.lerp(startPos.y, endPos.y, t) + (Math.random() - 0.5) * amp * env;
+                    arr[i * 3 + 2] = THREE.MathUtils.lerp(startPos.z, endPos.z, t);
+                }
+                beamArc3.geometry.attributes.position.needsUpdate = true;
+                beamArc3.visible = Math.random() < 0.8;
+            }
+
             muzzleFlash.position.copy(startPos);
-            const mfScale = (0.85 + Math.random() * 0.65) * (isOver ? 1.4 : 1.0);
-            muzzleFlash.scale.set(mfScale, mfScale, mfScale);
+            const mfScale = (0.85 + Math.random() * 0.55) * (isOver ? 1.4 : 1.0);
+            muzzleGlow.scale.set(1.3 * mfScale, 1.3 * mfScale, 1);
+            muzzleGlow.material.color.setHex(isOver ? 0x9ffcff : 0x40f8ff);
+            muzzleFlare.scale.set(1.6 * mfScale, 1.6 * mfScale, 1);
+            muzzleFlare.material.rotation = tSec * 5.5;
 
             impactGlow.visible = hasImpact;
             if (hasImpact) {
                 impactGlow.position.copy(endPos);
-                const igScale = 0.78 + Math.random() * 0.68;
-                impactGlow.scale.set(igScale, igScale, igScale);
+                const ig = 0.85 + Math.random() * 0.45;
+                impactCore.scale.set(1.2 * ig, 1.2 * ig, 1);
+                impactFlare.scale.set(3.0 * ig, 3.0 * ig, 1);
+                impactFlare.material.rotation = tSec * 4.0;
+                impactFlare2.scale.set(2.2 * ig, 2.2 * ig, 1);
+                impactFlare2.material.rotation = -tSec * 6.5 + 0.4;
             }
+
+            // Energy motes: spawn along the beam, drift outward and back toward the camera
+            const mArr = beamMotes.geometry.attributes.position.array;
+            const spawnPerFrame = isOver ? 3 : 2;
+            let spawned = 0;
+            for (let i = 0; i < BEAM_MOTE_COUNT; i++) {
+                const m = beamMoteData[i];
+                if (m.life <= 0) {
+                    if (spawned < spawnPerFrame) {
+                        spawned++;
+                        const atImpact = hasImpact && Math.random() < 0.35;
+                        m.life = 0.35 + Math.random() * 0.4;
+                        m.t = atImpact ? 1 : Math.random();
+                        const a = Math.random() * Math.PI * 2;
+                        const sp = atImpact ? 3.5 + Math.random() * 3 : 0.8 + Math.random() * 1.4;
+                        m.ox = 0; m.oy = 0; m.z = 0;
+                        m.vx = Math.cos(a) * sp;
+                        m.vy = Math.sin(a) * sp + (atImpact ? 1.5 : 0.4);
+                        m.vz = atImpact ? 2 + Math.random() * 3 : 1 + Math.random() * 2;
+                    } else {
+                        mArr[i * 3 + 1] = -100;
+                        continue;
+                    }
+                }
+                m.life -= dt;
+                m.ox += m.vx * dt; m.oy += m.vy * dt; m.z += m.vz * dt;
+                mArr[i * 3]     = THREE.MathUtils.lerp(startPos.x, endPos.x, m.t) + m.ox;
+                mArr[i * 3 + 1] = THREE.MathUtils.lerp(startPos.y, endPos.y, m.t) + m.oy;
+                mArr[i * 3 + 2] = THREE.MathUtils.lerp(startPos.z, endPos.z, m.t) + m.z;
+                if (m.life <= 0) mArr[i * 3 + 1] = -100;
+            }
+            beamMotes.geometry.attributes.position.needsUpdate = true;
+            beamMotes.material.color.setHex(isOver ? 0xffffff : 0x9ffcff);
 
             beamLight.position.lerpVectors(startPos, endPos, 0.35);
             beamLight.position.y = 2.0;
