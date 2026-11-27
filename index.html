@@ -1158,6 +1158,8 @@
                 taxiChance: 0.20,
                 pairChance: 0,       // chance a second hazard spawns alongside in another lane
                 medboneWeight: 2,    // how strongly power-ups favor the +1 life bone when hurt
+                energyDrain: 20,     // proton energy used per second of beam (full tank = 100)
+                energyRecharge: 34,  // proton energy regained per second while not firing
                 splitterChance: 0,   // share of ghosts that are pink Splitters (pop into 2 mini ghosts)
                 chargerChance: 0,    // share of ghosts that are red Chargers (flash a lane warning, then dash)
                 newEnemy: null,      // enemy introduced this round (forced once early so players meet it)
@@ -1186,6 +1188,8 @@
                 taxiChance: 0.34,
                 pairChance: 0.18,
                 medboneWeight: 1,
+                energyDrain: 22,
+                energyRecharge: 31,
                 splitterChance: 0.18,
                 chargerChance: 0,
                 newEnemy: 'splitter',
@@ -1214,6 +1218,8 @@
                 taxiChance: 0.42,
                 pairChance: 0.50,
                 medboneWeight: 1,
+                energyDrain: 25,
+                energyRecharge: 28,
                 splitterChance: 0.10,
                 chargerChance: 0.12,
                 newEnemy: 'charger',
@@ -4893,6 +4899,9 @@
             spawnBurstParticles(new THREE.Vector3(corgiX, 0.25, 0), 0x39ff14, 10, 0.65);
         }
 
+        const TAP_ENERGY_COST = 3; // flat cost per tap, on top of the short beam burst it fires
+        const BUST_ENERGY_REFUND = 8; // energy given back for each ghost busted
+
         function triggerTapShoot(clientX, clientY) {
             if (gameState !== 'PLAYING') return;
             if (protonEnergy < 5 && overchargeTimer <= 0) {
@@ -4900,7 +4909,7 @@
                 return;
             }
             if (overchargeTimer <= 0) {
-                protonEnergy = Math.max(0, protonEnergy - 6);
+                protonEnergy = Math.max(0, protonEnergy - TAP_ENERGY_COST);
             }
             burstTimer = 0.55;
             audio.playProtonZap();
@@ -5357,6 +5366,9 @@
 
             if (combo >= 4 && !inFeverMode) setFeverState(true);
 
+            // Every bust refunds a little proton energy, so accurate shooting keeps the pack topped up
+            protonEnergy = Math.min(100, protonEnergy + BUST_ENERGY_REFUND);
+
             scene.remove(ent.mesh);
             entities.splice(idx, 1);
 
@@ -5635,7 +5647,7 @@
                     if (wantsFire) {
                         activelyFiring = true;
                         if (overchargeTimer <= 0) {
-                            protonEnergy = Math.max(0, protonEnergy - 34 * dt);
+                            protonEnergy = Math.max(0, protonEnergy - cfg.energyDrain * dt);
                         } else {
                             protonEnergy = 100;
                         }
@@ -5704,7 +5716,7 @@
                         hideSideBeams();
                         beamLight.intensity = 0;
                         audio.setBeamHum(false);
-                        protonEnergy = Math.min(100, protonEnergy + 24 * dt);
+                        protonEnergy = Math.min(100, protonEnergy + cfg.energyRecharge * dt);
                     }
 
                     if (roadShaderMat) {
