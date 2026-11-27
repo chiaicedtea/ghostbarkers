@@ -2501,7 +2501,7 @@
         // Game State
         let gameState = 'MENU'; // MENU | INTRO | PLAYING | ROUND_CLEAR | GAME_OVER
 
-        // Corgi close-ups: La La faces the camera to say hi before a run (INTRO)
+        // Corgi close-ups: Ghostbarker faces the camera to say hi before a run (INTRO)
         // and celebrates after each round clear. Both are short and tap-to-skip.
         let poseMode = 'none';      // none | intro | celebrate
         let poseTimer = 0;          // seconds left in the current close-up
@@ -3302,51 +3302,93 @@
             bodyPivot.add(headGroup);
             corgiParts.head = headGroup;
 
-            const skull = new THREE.Mesh(new THREE.BoxGeometry(0.76, 0.64, 0.72), furTan);
+            // Chibi-style head: big and round, with big sparkly eyes, blush and a little smile
+            headGroup.scale.setScalar(1.22);
+            headGroup.position.set(0, 0.5, -0.86);
+
+            const skull = new THREE.Mesh(new THREE.SphereGeometry(0.42, 20, 16), furTan);
+            skull.scale.set(1.04, 0.9, 0.92);
             headGroup.add(skull);
 
-            const blaze = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.48, 0.06), furWhite);
-            blaze.position.set(0, 0.02, -0.36);
+            // White blaze and fluffy white cheeks/muzzle
+            const blaze = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 10), furWhite);
+            blaze.scale.set(0.7, 1.5, 0.5);
+            blaze.position.set(0, 0.1, -0.33);
             headGroup.add(blaze);
 
-            const snout = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.28, 0.38), furWhite);
-            snout.position.set(0, -0.12, -0.48);
-            headGroup.add(snout);
-
-            const nose = new THREE.Mesh(new THREE.SphereGeometry(0.085, 8, 8), darkEyeMat);
-            nose.scale.set(1.2, 0.85, 0.9);
-            nose.position.set(0, -0.02, -0.68);
-            headGroup.add(nose);
+            const muzzle = new THREE.Mesh(new THREE.SphereGeometry(0.22, 16, 12), furWhite);
+            muzzle.scale.set(1.15, 0.78, 0.9);
+            muzzle.position.set(0, -0.13, -0.33);
+            headGroup.add(muzzle);
 
             [-1, 1].forEach(side => {
-                const eye = new THREE.Mesh(new THREE.SphereGeometry(0.075, 8, 8), darkEyeMat);
-                eye.position.set(side * 0.21, 0.09, -0.36);
-                headGroup.add(eye);
-
-                const glint = new THREE.Mesh(
-                    new THREE.SphereGeometry(0.024, 6, 6),
-                    new THREE.MeshBasicMaterial({ color: 0xffffff })
-                );
-                glint.position.set(side * 0.23, 0.12, -0.42);
-                headGroup.add(glint);
+                const cheek = new THREE.Mesh(new THREE.SphereGeometry(0.17, 12, 10), furWhite);
+                cheek.scale.set(1, 0.85, 0.8);
+                cheek.position.set(side * 0.2, -0.12, -0.24);
+                headGroup.add(cheek);
             });
 
-            const earGeo = new THREE.ConeGeometry(0.22, 0.54, 4);
-            const earInnerGeo = new THREE.ConeGeometry(0.13, 0.38, 4);
+            const nose = new THREE.Mesh(new THREE.SphereGeometry(0.065, 12, 10), darkEyeMat);
+            nose.scale.set(1.35, 0.9, 0.9);
+            nose.position.set(0, -0.06, -0.52);
+            headGroup.add(nose);
+
+            // Little smile with a peeking pink tongue
+            const smileMat = new THREE.MeshBasicMaterial({ color: 0x3b1d0e });
+            [-1, 1].forEach(side => {
+                const smile = new THREE.Mesh(new THREE.TorusGeometry(0.045, 0.011, 6, 12, Math.PI), smileMat);
+                smile.rotation.z = Math.PI;
+                smile.position.set(side * 0.045, -0.16, -0.5);
+                headGroup.add(smile);
+            });
+            const tongue = new THREE.Mesh(
+                new THREE.SphereGeometry(0.05, 10, 8),
+                new THREE.MeshStandardMaterial({ color: 0xff6b9a, roughness: 0.5 })
+            );
+            tongue.scale.set(0.9, 1.15, 0.5);
+            tongue.position.set(0, -0.215, -0.47);
+            headGroup.add(tongue);
+
+            // Big sparkly eyes
+            const blushMat = new THREE.MeshBasicMaterial({ color: 0xff8fb8, transparent: true, opacity: 0.75 });
+            const glintMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+            [-1, 1].forEach(side => {
+                const eye = new THREE.Mesh(new THREE.SphereGeometry(0.1, 14, 12), darkEyeMat);
+                eye.scale.set(0.9, 1.05, 0.6);
+                eye.position.set(side * 0.19, 0.07, -0.34);
+                headGroup.add(eye);
+
+                const glint = new THREE.Mesh(new THREE.SphereGeometry(0.034, 8, 8), glintMat);
+                glint.position.set(side * 0.19 + 0.03, 0.115, -0.4);
+                headGroup.add(glint);
+                const glint2 = new THREE.Mesh(new THREE.SphereGeometry(0.016, 6, 6), glintMat);
+                glint2.position.set(side * 0.19 - 0.03, 0.03, -0.4);
+                headGroup.add(glint2);
+
+                const blush = new THREE.Mesh(new THREE.CircleGeometry(0.06, 14), blushMat);
+                blush.scale.set(1.3, 0.75, 1);
+                blush.position.set(side * 0.3, -0.05, -0.33);
+                blush.rotation.y = Math.PI + side * 0.6;
+                headGroup.add(blush);
+            });
+
+            // Big soft ears
+            const earGeo = new THREE.ConeGeometry(0.2, 0.5, 14);
+            const earInnerGeo = new THREE.ConeGeometry(0.125, 0.36, 12);
             [-1, 1].forEach(side => {
                 const earPivot = new THREE.Group();
-                earPivot.position.set(side * 0.28, 0.3, 0.02);
+                earPivot.position.set(side * 0.25, 0.26, 0.02);
                 earPivot.rotation.z = -side * 0.24;
                 earPivot.rotation.x = 0.08;
 
                 const outerEar = new THREE.Mesh(earGeo, furTan);
+                outerEar.scale.set(1, 1, 0.55);
                 outerEar.position.y = 0.22;
-                outerEar.rotation.y = Math.PI / 4;
                 earPivot.add(outerEar);
 
                 const innerEar = new THREE.Mesh(earInnerGeo, earPink);
+                innerEar.scale.set(1, 1, 0.4);
                 innerEar.position.set(0, 0.19, -0.06);
-                innerEar.rotation.y = Math.PI / 4;
                 earPivot.add(innerEar);
 
                 headGroup.add(earPivot);
@@ -4570,8 +4612,8 @@
                 const shareUrl = window.location.href.split('?')[0].split('#')[0];
                 const starStr = '⭐'.repeat(lastStars);
                 const shareText = withScore && score > 0
-                    ? `🐾⚡ I scored ${score.toLocaleString()} pts ${starStr} in Ghostbarkers: Manhattan Dash with La La the corgi! Can you beat me? Follow @${IG_HANDLE}`
-                    : `🐾⚡ Play Ghostbarkers: Manhattan Dash! Help La La the corgi bust ghosts across NYC. By @${IG_HANDLE}`;
+                    ? `🐾⚡ I scored ${score.toLocaleString()} pts ${starStr} in Ghostbarkers: Manhattan Dash with Ghostbarker the corgi! Can you beat me? Follow @${IG_HANDLE}`
+                    : `🐾⚡ Play Ghostbarkers: Manhattan Dash! Help Ghostbarker the corgi bust ghosts across NYC. By @${IG_HANDLE}`;
 
                 if (navigator.share) {
                     navigator.share({
@@ -4859,7 +4901,7 @@
                 pendingEndScreen = false;
 
                 if (resetRun) {
-                    // La La turns to the camera to say hi, then the run begins
+                    // Ghostbarker turns to the camera to say hi, then the run begins
                     gameState = 'INTRO';
                     poseMode = 'intro';
                     poseTimer = introsPlayed === 0 ? INTRO_DURATION : INTRO_REPLAY_DURATION;
@@ -4867,7 +4909,7 @@
                     poseBlend = 1;
                     introsPlayed++;
                     hudEl.style.display = 'none';
-                    showPoseCaption('LA LA REPORTING FOR DUTY!', `ROUND ${ROUNDS[roundIdx].num} • ${ROUNDS[roundIdx].fullName}`);
+                    showPoseCaption('GHOSTBARKER REPORTING FOR DUTY!', `ROUND ${ROUNDS[roundIdx].num} • ${ROUNDS[roundIdx].fullName}`);
                 } else {
                     poseMode = 'none';
                     hidePoseCaption();
@@ -4992,7 +5034,7 @@
             renderStarsAndReward(stars, isRunOver);
 
             if (roundCleared) {
-                // La La turns around and celebrates before the results card appears
+                // Ghostbarker turns around and celebrates before the results card appears
                 clearEntities();
                 roundBannerEl.classList.remove('show');
                 poseMode = 'celebrate';
