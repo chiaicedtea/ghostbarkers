@@ -3427,6 +3427,8 @@
             });
 
             corgiParts.legs = [];
+            const pawPadGeo = new THREE.SphereGeometry(0.055, 10, 8);
+            const pawPadMat = new THREE.MeshStandardMaterial({ color: 0xff8fb8, roughness: 0.55 });
             const legCoords = [
                 { x: -0.30, z: -0.52, phase: 0, isFront: true },
                 { x:  0.30, z: -0.52, phase: 0.45, isFront: true },
@@ -3437,17 +3439,32 @@
                 const legPivot = new THREE.Group();
                 legPivot.position.set(lc.x, -0.18, lc.z);
 
-                const sleeve = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.26, 0.24), jumpsuitMat);
+                // Soft rounded leg: puffy jumpsuit cuff, short furry leg, round white paw with pink toe beans
+                const sleeve = new THREE.Mesh(new THREE.SphereGeometry(0.135, 14, 12), jumpsuitMat);
+                sleeve.scale.set(1, 1.15, 1);
                 sleeve.position.y = -0.12;
                 legPivot.add(sleeve);
 
-                const lowerLeg = new THREE.Mesh(new THREE.BoxGeometry(0.20, 0.20, 0.20), furDark);
-                lowerLeg.position.y = -0.32;
+                const lowerLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.11, 0.22, 14), furTan);
+                lowerLeg.position.y = -0.3;
                 legPivot.add(lowerLeg);
 
-                const paw = new THREE.Mesh(new THREE.BoxGeometry(0.23, 0.13, 0.28), furWhite);
-                paw.position.set(0, -0.46, -0.04);
+                const paw = new THREE.Mesh(new THREE.SphereGeometry(0.14, 16, 12), furWhite);
+                paw.scale.set(1, 0.68, 1.15);
+                paw.position.set(0, -0.43, -0.04);
                 legPivot.add(paw);
+
+                const padY = -0.43 - 0.14 * 0.68 + 0.012;
+                const mainPad = new THREE.Mesh(pawPadGeo, pawPadMat);
+                mainPad.scale.set(1.15, 0.35, 1);
+                mainPad.position.set(0, padY, 0.0);
+                legPivot.add(mainPad);
+                [-0.065, 0, 0.065].forEach((tx, ti) => {
+                    const bean = new THREE.Mesh(pawPadGeo, pawPadMat);
+                    bean.scale.set(0.48, 0.3, 0.48);
+                    bean.position.set(tx, padY + 0.008, -0.105 - (ti === 1 ? 0.02 : 0));
+                    legPivot.add(bean);
+                });
 
                 legPivot.userData.phase = lc.phase;
                 legPivot.userData.isFront = lc.isFront;
