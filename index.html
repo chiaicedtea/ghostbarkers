@@ -484,6 +484,18 @@
             color: #ffd500;
         }
 
+        .pu-wide {
+            background: rgba(255, 42, 133, 0.22);
+            border: 1px solid #ff2a85;
+            color: #ff7ac8;
+        }
+
+        .pu-chain {
+            background: rgba(125, 211, 252, 0.22);
+            border: 1px solid #7dd3fc;
+            color: #bae6fd;
+        }
+
         /* Proton Energy Gauge */
         #energy-panel {
             width: min(92vw, 340px);
@@ -607,6 +619,17 @@
             margin-top: 4px;
             letter-spacing: 0.14em;
         }
+
+        #round-banner #banner-new {
+            font-size: 0.68rem;
+            color: #ff7ac8;
+            text-shadow: 0 0 12px rgba(255, 42, 133, 0.95), 0 2px 6px #000;
+            margin-top: 10px;
+            letter-spacing: 0.08em;
+            max-width: 88vw;
+        }
+
+        #round-banner #banner-new:empty { display: none; }
 
         /* Modal Overlays */
         .overlay-screen {
@@ -980,6 +1003,7 @@
     <div id="round-banner">
         <h2 id="banner-title">ROUND 1</h2>
         <p id="banner-subtitle">MIDTOWN PATROL</p>
+        <p id="banner-new"></p>
     </div>
 
     <!-- Top Glassmorphism Neon HUD -->
@@ -1134,6 +1158,11 @@
                 taxiChance: 0.20,
                 pairChance: 0,       // chance a second hazard spawns alongside in another lane
                 medboneWeight: 2,    // how strongly power-ups favor the +1 life bone when hurt
+                splitterChance: 0,   // share of ghosts that are pink Splitters (pop into 2 mini ghosts)
+                chargerChance: 0,    // share of ghosts that are red Chargers (flash a lane warning, then dash)
+                newEnemy: null,      // enemy introduced this round (forced once early so players meet it)
+                powerups: ['overcharge', 'shield', 'double'],
+                intro: '',
                 giantZ: -112,
                 fogColor: 0x091622,
                 skyColor: 0x050b16,
@@ -1157,6 +1186,11 @@
                 taxiChance: 0.34,
                 pairChance: 0.18,
                 medboneWeight: 1,
+                splitterChance: 0.18,
+                chargerChance: 0,
+                newEnemy: 'splitter',
+                powerups: ['overcharge', 'shield', 'double', 'widebeam'],
+                intro: 'NEW: SPLITTER GHOSTS • WIDE BEAM POWER-UP',
                 giantZ: -96,
                 fogColor: 0x1e0934,
                 skyColor: 0x120522,
@@ -1180,6 +1214,11 @@
                 taxiChance: 0.42,
                 pairChance: 0.50,
                 medboneWeight: 1,
+                splitterChance: 0.10,
+                chargerChance: 0.12,
+                newEnemy: 'charger',
+                powerups: ['overcharge', 'shield', 'double', 'widebeam', 'chain'],
+                intro: 'NEW: CHARGER GHOSTS • CHAIN LIGHTNING POWER-UP',
                 giantZ: -84,
                 fogColor: 0x0e1d22,
                 skyColor: 0x08111b,
@@ -1828,6 +1867,46 @@
                 } catch (e) {}
             }
 
+            // Two quick rising sirens: a Charger ghost is about to dash
+            playChargerWarn() {
+                try {
+                    if (!this.ctx) return;
+                    const now = this.ctx.currentTime;
+                    [0, 0.16].forEach(off => {
+                        const osc = this.ctx.createOscillator();
+                        const g = this.ctx.createGain();
+                        osc.type = 'sawtooth';
+                        osc.frequency.setValueAtTime(520, now + off);
+                        osc.frequency.exponentialRampToValueAtTime(1180, now + off + 0.13);
+                        g.gain.setValueAtTime(0.09, now + off);
+                        g.gain.exponentialRampToValueAtTime(0.001, now + off + 0.15);
+                        osc.connect(g);
+                        g.connect(this.sfxGain);
+                        osc.start(now + off);
+                        osc.stop(now + off + 0.16);
+                    });
+                } catch (e) {}
+            }
+
+            // Short electric crackle for chain lightning arcs
+            playChainZap() {
+                try {
+                    if (!this.ctx) return;
+                    const now = this.ctx.currentTime;
+                    const osc = this.ctx.createOscillator();
+                    const g = this.ctx.createGain();
+                    osc.type = 'square';
+                    osc.frequency.setValueAtTime(1800, now);
+                    osc.frequency.exponentialRampToValueAtTime(260, now + 0.12);
+                    g.gain.setValueAtTime(0.07, now);
+                    g.gain.exponentialRampToValueAtTime(0.001, now + 0.13);
+                    osc.connect(g);
+                    g.connect(this.sfxGain);
+                    osc.start(now);
+                    osc.stop(now + 0.14);
+                } catch (e) {}
+            }
+
             playShieldBlock() {
                 try {
                     if (!this.ctx) return;
@@ -2369,6 +2448,11 @@
         let overchargeTimer = 0;
         let doublePointsTimer = 0;
         let hasEctoShield = false;
+        let wideBeamTimer = 0;      // Round 2+: beam also hits the lanes on either side
+        let chainTimer = 0;         // Round 3: busts arc lightning to nearby ghosts
+        let firstNewEnemySpawned = false;
+        const WIDE_BEAM_DURATION = 5.0;
+        const CHAIN_DURATION = 5.0;
 
         // Player Movement, Fence-Jump Physics & Near-Miss Tracking
         let currentLane = 2;
@@ -2429,6 +2513,7 @@
         const roundBannerEl = document.getElementById('round-banner');
         const bannerTitleEl = document.getElementById('banner-title');
         const bannerSubtitleEl = document.getElementById('banner-subtitle');
+        const bannerNewEl = document.getElementById('banner-new');
 
         const hudEl = document.getElementById('hud');
         const hudScoreEl = document.getElementById('hud-score');
@@ -2533,6 +2618,7 @@
                 buildGiantSkylineStayPuft();
                 buildDetailedCorgi();
                 buildProtonBeam();
+                buildBlasterUpgradeFx();
 
                 window.addEventListener('resize', onResize);
                 sceneReady = true;
@@ -3504,6 +3590,157 @@
             scene.add(beamGroup);
         }
 
+        // Wide Beam side streams + Chain Lightning arc pool (cheap lines, fixed pools)
+        let sideBeams = [];
+        let chainArcs = [];
+        const CHAIN_ARC_POINTS = 12;
+        const CHAIN_ARC_SEGS = 5;
+        const _arcA = new THREE.Vector3();
+        const _arcB = new THREE.Vector3();
+        const _arcDir = new THREE.Vector3();
+        const _arcUp = new THREE.Vector3(0, 1, 0);
+        function buildBlasterUpgradeFx() {
+            const makeJagLine = (color, pts, opacity = 1) => {
+                const geo = new THREE.BufferGeometry();
+                geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pts * 3), 3));
+                const line = new THREE.Line(geo, new THREE.LineBasicMaterial({
+                    color, transparent: true, opacity,
+                    blending: THREE.AdditiveBlending, depthWrite: false
+                }));
+                line.frustumCulled = false;
+                line.visible = false;
+                scene.add(line);
+                return line;
+            };
+            for (let i = 0; i < 2; i++) {
+                const core = new THREE.Mesh(
+                    new THREE.CylinderGeometry(0.1, 0.15, 1, 6, 1, true),
+                    new THREE.MeshBasicMaterial({
+                        color: 0xff5fae, transparent: true, opacity: 0.85,
+                        blending: THREE.AdditiveBlending, depthWrite: false
+                    })
+                );
+                core.visible = false;
+                scene.add(core);
+                sideBeams.push({ core, arc: makeJagLine(0xffc2e2, 16, 0.9) });
+            }
+            // Each chain arc: a crackly thin line plus a few thick glowing bolt segments and a target flash
+            const segGeo = new THREE.CylinderGeometry(0.07, 0.07, 1, 5, 1, true);
+            const segMat = new THREE.MeshBasicMaterial({
+                color: 0xd6f3ff, transparent: true, opacity: 1,
+                blending: THREE.AdditiveBlending, depthWrite: false
+            });
+            const flashTex = makeGlowTexture(64, [
+                [0, 'rgba(255,255,255,1)'], [0.3, 'rgba(186,230,253,0.7)'], [1, 'rgba(125,211,252,0)']
+            ]);
+            for (let i = 0; i < 6; i++) {
+                const segs = [];
+                for (let k = 0; k < CHAIN_ARC_SEGS; k++) {
+                    const m = new THREE.Mesh(segGeo, segMat);
+                    m.visible = false;
+                    m.frustumCulled = false;
+                    scene.add(m);
+                    segs.push(m);
+                }
+                const flash = new THREE.Sprite(new THREE.SpriteMaterial({
+                    map: flashTex, color: 0xbae6fd, transparent: true,
+                    blending: THREE.AdditiveBlending, depthWrite: false
+                }));
+                flash.visible = false;
+                scene.add(flash);
+                chainArcs.push({ line: makeJagLine(0xbae6fd, CHAIN_ARC_POINTS), segs, flash, life: 0, from: new THREE.Vector3(), to: new THREE.Vector3() });
+            }
+        }
+
+        function hideSideBeams() {
+            sideBeams.forEach(sb => { sb.core.visible = false; sb.arc.visible = false; });
+        }
+
+        function updateSideBeam(idx, startPos, endPos, tSec) {
+            const sb = sideBeams[idx];
+            if (!sb) return;
+            const dir = new THREE.Vector3().subVectors(endPos, startPos);
+            const len = Math.max(0.5, dir.length());
+            sb.core.visible = true;
+            sb.core.position.addVectors(startPos, endPos).multiplyScalar(0.5);
+            sb.core.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+            const w = 1.0 + Math.sin(tSec * 29 + idx) * 0.15;
+            sb.core.scale.set(w, len, w);
+            const arr = sb.arc.geometry.attributes.position.array;
+            const count = arr.length / 3;
+            for (let i = 0; i < count; i++) {
+                const t = i / (count - 1);
+                const env = Math.sin(t * Math.PI);
+                arr[i * 3]     = THREE.MathUtils.lerp(startPos.x, endPos.x, t) + (Math.random() - 0.5) * 0.4 * env;
+                arr[i * 3 + 1] = THREE.MathUtils.lerp(startPos.y, endPos.y, t) + (Math.random() - 0.5) * 0.4 * env;
+                arr[i * 3 + 2] = THREE.MathUtils.lerp(startPos.z, endPos.z, t);
+            }
+            sb.arc.geometry.attributes.position.needsUpdate = true;
+            sb.arc.visible = true;
+        }
+
+        function spawnChainArc(from, to) {
+            const arc = chainArcs.find(a => a.life <= 0) || chainArcs[0];
+            arc.life = 0.22;
+            arc.from.copy(from);
+            arc.to.copy(to);
+            arc.line.visible = true;
+            arc.flash.visible = true;
+            arc.segs.forEach(m => { m.visible = true; });
+        }
+
+        function hideChainArc(a) {
+            a.life = 0;
+            a.line.visible = false;
+            a.flash.visible = false;
+            a.segs.forEach(m => { m.visible = false; });
+        }
+
+        function updateChainArcs(dt, scroll) {
+            chainArcs.forEach(a => {
+                if (a.life <= 0) return;
+                a.life -= dt;
+                // ride along with the road so the arc stays on the ghosts it hit
+                a.from.z += scroll;
+                a.to.z += scroll;
+                if (a.life <= 0) { hideChainArc(a); return; }
+                const arr = a.line.geometry.attributes.position.array;
+                for (let i = 0; i < CHAIN_ARC_POINTS; i++) {
+                    const t = i / (CHAIN_ARC_POINTS - 1);
+                    const env = Math.sin(t * Math.PI);
+                    arr[i * 3]     = THREE.MathUtils.lerp(a.from.x, a.to.x, t) + (Math.random() - 0.5) * 1.1 * env;
+                    arr[i * 3 + 1] = THREE.MathUtils.lerp(a.from.y, a.to.y, t) + (Math.random() - 0.5) * 1.1 * env + env * 0.8;
+                    arr[i * 3 + 2] = THREE.MathUtils.lerp(a.from.z, a.to.z, t) + (Math.random() - 0.5) * 0.6 * env;
+                }
+                a.line.geometry.attributes.position.needsUpdate = true;
+                const fade = Math.min(1, a.life / 0.12);
+                a.line.material.opacity = fade;
+
+                // Thick bolt: re-jagged every frame
+                let prevX = a.from.x, prevY = a.from.y, prevZ = a.from.z;
+                for (let k = 0; k < CHAIN_ARC_SEGS; k++) {
+                    const t = (k + 1) / CHAIN_ARC_SEGS;
+                    const env = k === CHAIN_ARC_SEGS - 1 ? 0 : 1;
+                    _arcA.set(prevX, prevY, prevZ);
+                    _arcB.set(
+                        THREE.MathUtils.lerp(a.from.x, a.to.x, t) + (Math.random() - 0.5) * 0.9 * env,
+                        THREE.MathUtils.lerp(a.from.y, a.to.y, t) + (Math.random() - 0.5) * 0.9 * env + Math.sin(t * Math.PI) * 0.7,
+                        THREE.MathUtils.lerp(a.from.z, a.to.z, t)
+                    );
+                    _arcDir.subVectors(_arcB, _arcA);
+                    const len = Math.max(0.05, _arcDir.length());
+                    const m = a.segs[k];
+                    m.position.addVectors(_arcA, _arcB).multiplyScalar(0.5);
+                    m.quaternion.setFromUnitVectors(_arcUp, _arcDir.normalize());
+                    m.scale.set(fade * 1.4, len, fade * 1.4);
+                    prevX = _arcB.x; prevY = _arcB.y; prevZ = _arcB.z;
+                }
+                a.flash.position.copy(a.to);
+                const fs = (1.6 + Math.random() * 0.8) * fade;
+                a.flash.scale.set(fs * 1.8, fs * 1.8, 1);
+            });
+        }
+
         function updateLiveProtonBeam(startPos, endPos, hasImpact, tSec) {
             const wasVisible = beamGroup.visible;
             beamGroup.visible = true;
@@ -3693,6 +3930,109 @@
                 g.add(eye);
             });
 
+            return g;
+        }
+
+        // Round 2+: Pink Splitter ghost. Pops into two mini ghosts when busted.
+        function createSplitterMesh() {
+            const g = new THREE.Group();
+            const mat = createGhostShaderMaterial(0xff2a85, 0xffd6f0, 0.9);
+            g.userData.shaderMat = mat;
+
+            // Two lobes squeezed together, so it reads as "about to split"
+            [-1, 1].forEach(side => {
+                const lobe = new THREE.Mesh(new THREE.SphereGeometry(0.62, 14, 12), mat);
+                lobe.scale.set(0.95, 1.15, 0.9);
+                lobe.position.set(side * 0.42, 1.5, 0);
+                g.add(lobe);
+            });
+
+            const eyeMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+            const pupilMat = new THREE.MeshBasicMaterial({ color: 0x2a0418 });
+            [-1, 1].forEach(side => {
+                const eye = new THREE.Mesh(new THREE.SphereGeometry(0.17, 8, 8), eyeMat);
+                eye.position.set(side * 0.42, 1.68, 0.56);
+                g.add(eye);
+                const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.08, 6, 6), pupilMat);
+                pupil.position.set(side * 0.42, 1.68, 0.7);
+                g.add(pupil);
+            });
+
+            // Glowing crack down the middle
+            const crack = new THREE.Mesh(
+                new THREE.BoxGeometry(0.07, 1.25, 0.08),
+                new THREE.MeshBasicMaterial({ color: 0xfff0a8 })
+            );
+            crack.position.set(0, 1.5, 0.62);
+            g.add(crack);
+            return g;
+        }
+
+        function createMiniGhostMesh() {
+            const g = new THREE.Group();
+            const mat = createGhostShaderMaterial(0xff7ac8, 0xffe4f3, 0.9);
+            g.userData.shaderMat = mat;
+            const body = new THREE.Mesh(new THREE.SphereGeometry(0.46, 12, 10), mat);
+            body.scale.set(1, 1.1, 0.9);
+            body.position.y = 1.3;
+            g.add(body);
+            const eyeMat = new THREE.MeshBasicMaterial({ color: 0x2a0418 });
+            [-1, 1].forEach(side => {
+                const eye = new THREE.Mesh(new THREE.SphereGeometry(0.08, 6, 6), eyeMat);
+                eye.position.set(side * 0.17, 1.38, 0.4);
+                g.add(eye);
+            });
+            return g;
+        }
+
+        // Round 3: Red Charger ghost. Flashes a warning down its lane, then dashes.
+        function createChargerMesh() {
+            const g = new THREE.Group();
+            const mat = createGhostShaderMaterial(0xff3b1f, 0xffd08a, 0.92);
+            g.userData.shaderMat = mat;
+
+            const head = new THREE.Mesh(new THREE.SphereGeometry(0.66, 14, 12), mat);
+            head.scale.set(1.05, 0.95, 1.2);
+            head.position.y = 1.6;
+            g.add(head);
+
+            // Swept-back streamer tail
+            const tail = new THREE.Mesh(new THREE.ConeGeometry(0.55, 1.7, 12), mat);
+            tail.rotation.x = -Math.PI / 2.4;
+            tail.position.set(0, 1.35, -0.95);
+            g.add(tail);
+
+            // Horns
+            const hornMat = new THREE.MeshBasicMaterial({ color: 0xffd500 });
+            [-1, 1].forEach(side => {
+                const horn = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.5, 8), hornMat);
+                horn.position.set(side * 0.42, 2.18, 0.1);
+                horn.rotation.z = -side * 0.5;
+                g.add(horn);
+            });
+
+            // Angry slanted eyes
+            const eyeMat = new THREE.MeshBasicMaterial({ color: 0xfff7c2 });
+            [-1, 1].forEach(side => {
+                const eye = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.1, 0.06), eyeMat);
+                eye.position.set(side * 0.25, 1.68, 0.76);
+                eye.rotation.z = side * 0.35;
+                g.add(eye);
+            });
+
+            // Lane warning stripe (lives in the ghost's group; positioned in world z each frame)
+            const stripe = new THREE.Mesh(
+                new THREE.PlaneGeometry(1.9, 1),
+                new THREE.MeshBasicMaterial({
+                    color: 0xff2a1f, transparent: true, opacity: 0,
+                    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+                })
+            );
+            stripe.rotation.x = -Math.PI / 2;
+            stripe.position.y = 0.05;
+            stripe.visible = false;
+            g.add(stripe);
+            g.userData.stripe = stripe;
             return g;
         }
 
@@ -3896,6 +4236,50 @@
                 g.add(starB);
                 g.userData.spinA = starA;
                 g.userData.spinB = starB;
+            } else if (puType === 'widebeam') {
+                // Hot Pink Trident: Wide Beam
+                ringCol = 0xff2a85;
+                const fork = new THREE.Group();
+                fork.position.y = 1.25;
+                const forkMat = new THREE.MeshBasicMaterial({ color: 0xff2a85 });
+                const tipMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+                [-0.32, 0, 0.32].forEach((px, k) => {
+                    const prong = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, k === 1 ? 0.8 : 0.6, 6), forkMat);
+                    prong.position.set(px, k === 1 ? 0.1 : 0.2, 0);
+                    fork.add(prong);
+                    const tip = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.22, 6), tipMat);
+                    tip.position.set(px, k === 1 ? 0.6 : 0.6, 0);
+                    fork.add(tip);
+                });
+                const bar = new THREE.Mesh(new THREE.BoxGeometry(0.76, 0.1, 0.1), forkMat);
+                bar.position.y = -0.1;
+                fork.add(bar);
+                const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.5, 6), forkMat);
+                handle.position.y = -0.4;
+                fork.add(handle);
+                g.add(fork);
+                g.userData.spinA = fork;
+            } else if (puType === 'chain') {
+                // Ice-Blue Lightning Bolt: Chain Lightning
+                ringCol = 0x7dd3fc;
+                const bolt = new THREE.Group();
+                bolt.position.y = 1.25;
+                const boltMat = new THREE.MeshBasicMaterial({ color: 0xbae6fd });
+                [[0.12, 0.28, -0.35], [-0.08, 0, 0.35], [0.1, -0.3, -0.35]].forEach(([bx, by, rz]) => {
+                    const seg = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.46, 0.12), boltMat);
+                    seg.position.set(bx, by, 0);
+                    seg.rotation.z = rz;
+                    bolt.add(seg);
+                });
+                g.add(bolt);
+                const ring = new THREE.Mesh(
+                    new THREE.TorusGeometry(0.72, 0.06, 8, 20),
+                    new THREE.MeshBasicMaterial({ color: 0xffffff })
+                );
+                ring.position.y = 1.25;
+                g.add(ring);
+                g.userData.spinA = bolt;
+                g.userData.spinB = ring;
             } else {
                 // Corgi Med-Bone (Vibrant Emerald & Sunny Yellow)
                 ringCol = 0x39ff14;
@@ -4242,6 +4626,12 @@
             if (doublePointsTimer > 0) {
                 pillsHtml += `<span class="pu-pill pu-double">⭐ 2X FRENZY ${doublePointsTimer.toFixed(1)}s</span>`;
             }
+            if (wideBeamTimer > 0) {
+                pillsHtml += `<span class="pu-pill pu-wide">🔱 WIDE BEAM ${wideBeamTimer.toFixed(1)}s</span>`;
+            }
+            if (chainTimer > 0) {
+                pillsHtml += `<span class="pu-pill pu-chain">🌩️ CHAIN ${chainTimer.toFixed(1)}s</span>`;
+            }
             powerupPillsEl.innerHTML = pillsHtml;
         }
 
@@ -4294,8 +4684,9 @@
             roundBadgeEl.textContent = `ROUND ${cfg.num} • ${cfg.name}`;
             bannerTitleEl.textContent = `ROUND ${cfg.num}`;
             bannerSubtitleEl.textContent = cfg.fullName;
+            if (bannerNewEl) bannerNewEl.textContent = cfg.intro || '';
             roundBannerEl.classList.add('show');
-            setTimeout(() => roundBannerEl.classList.remove('show'), 2200);
+            setTimeout(() => roundBannerEl.classList.remove('show'), cfg.intro ? 3000 : 2200);
 
             if (gestureHintTimeout) clearTimeout(gestureHintTimeout);
             if (roundIdx === 0) {
@@ -4314,6 +4705,8 @@
             particles = [];
             shockwaves.forEach(s => scene.remove(s.mesh));
             shockwaves = [];
+            hideSideBeams();
+            chainArcs.forEach(hideChainArc);
         }
 
         function startRound(roundIdx, resetRun = false) {
@@ -4331,6 +4724,10 @@
                     doublePointsTimer = 0;
                     hasEctoShield = false;
                 }
+                // Blaster upgrades never carry over into the next round
+                wideBeamTimer = 0;
+                chainTimer = 0;
+                firstNewEnemySpawned = false;
                 combo = 0;
                 comboTimer = 0;
                 setFeverState(false);
@@ -4397,6 +4794,7 @@
             }
             setFeverState(false);
             if (beamGroup) beamGroup.visible = false;
+            hideSideBeams();
             if (beamLight) beamLight.intensity = 0;
             audio.setBeamHum(false);
             gestureHintEl.classList.remove('show');
@@ -4706,12 +5104,59 @@
             });
         }
 
+        function makeGhostEntity(subType, lane, z) {
+            const x = LANE_X[lane];
+            let mesh, ent;
+            const base = { kind: 'ghost', subType, lane, x, z, hoverPhase: Math.random() * 6.28, targetX: x };
+            if (subType === 'phantom') {
+                mesh = createPhantomMesh();
+                ent = Object.assign(base, { hp: 0.22, maxHp: 0.22, points: 150, hitRadius: 1.05, weaveTimer: 0.9 + Math.random() * 0.7 });
+            } else if (subType === 'splitter') {
+                mesh = createSplitterMesh();
+                ent = Object.assign(base, { hp: 0.30, maxHp: 0.30, points: 200, hitRadius: 1.1 });
+            } else if (subType === 'mini') {
+                mesh = createMiniGhostMesh();
+                ent = Object.assign(base, { hp: 0.07, maxHp: 0.07, points: 60, hitRadius: 0.95 });
+            } else if (subType === 'charger') {
+                mesh = createChargerMesh();
+                ent = Object.assign(base, { hp: 0.25, maxHp: 0.25, points: 250, hitRadius: 1.0, chargeState: 'approach', warnTimer: 0 });
+            } else {
+                mesh = createSlimerMesh();
+                ent = Object.assign(base, { hp: 0.18, maxHp: 0.18, points: 100, hitRadius: 1.05 });
+            }
+            mesh.position.set(x, 0, z);
+            scene.add(mesh);
+            ent.mesh = mesh;
+            return ent;
+        }
+
+        // Splitter busted far enough away: two mini ghosts fly out to the neighboring lanes
+        function spawnSplitMinis(parent) {
+            if (parent.z > -10) return;
+            const lanes = [parent.lane - 1, parent.lane + 1].filter(l => l >= 0 && l <= 4);
+            if (lanes.length < 2) lanes.push(parent.lane);
+            lanes.forEach(l => {
+                const mini = makeGhostEntity('mini', l, parent.z - 1.5);
+                mini.x = parent.x;
+                mini.mesh.position.x = parent.x;
+                entities.push(mini);
+            });
+            spawnPopup(new THREE.Vector3(parent.x, 2.6, parent.z), 'SPLIT!', '#ff7ac8');
+        }
+
         // hazardOnly: used for the paired second spawn in later rounds (no power-ups, no boss)
         function spawnEntity(forcedLane = null, hazardOnly = false) {
             const cfg = ROUNDS[currentRoundIdx];
 
             if (!hazardOnly && !firstBossSpawned && roundElapsed >= 6.5) {
                 spawnStayPuftMiniBoss(currentLane);
+                return;
+            }
+
+            // Introduce this round's new ghost once, early, right in the player's lane
+            if (!hazardOnly && cfg.newEnemy && !firstNewEnemySpawned && roundElapsed >= 2.5) {
+                firstNewEnemySpawned = true;
+                entities.push(makeGhostEntity(cfg.newEnemy, currentLane, -96));
                 return;
             }
 
@@ -4723,7 +5168,7 @@
 
             // 1) 4 Colorful Power-Ups
             if (roll < cfg.powerupChance) {
-                const puChoices = ['overcharge', 'shield', 'double'];
+                const puChoices = cfg.powerups.slice();
                 if (lives < 3) for (let m = 0; m < cfg.medboneWeight; m++) puChoices.push('medbone');
                 const puType = puChoices[Math.floor(Math.random() * puChoices.length)];
                 const mesh = createPowerupMesh(puType);
@@ -4737,36 +5182,12 @@
                 if (!hazardOnly && gRoll < cfg.bossChance && (roundElapsed >= 3.5 || currentRoundIdx > 0)) {
                     spawnStayPuftMiniBoss(lane);
                     return;
-                } else if (gRoll < cfg.bossChance + cfg.phantomChance) {
-                    const mesh = createPhantomMesh();
-                    mesh.position.set(x, 0, z);
-                    scene.add(mesh);
-                    entity = {
-                        kind: 'ghost',
-                        subType: 'phantom',
-                        lane, x, z, mesh,
-                        hp: 0.22,
-                        maxHp: 0.22,
-                        points: 150,
-                        hitRadius: 1.05,
-                        hoverPhase: Math.random() * 6.28,
-                        weaveTimer: 0.9 + Math.random() * 0.7,
-                        targetX: x
-                    };
                 } else {
-                    const mesh = createSlimerMesh();
-                    mesh.position.set(x, 0, z);
-                    scene.add(mesh);
-                    entity = {
-                        kind: 'ghost',
-                        subType: 'slimer',
-                        lane, x, z, mesh,
-                        hp: 0.18,
-                        maxHp: 0.18,
-                        points: 100,
-                        hitRadius: 1.05,
-                        hoverPhase: Math.random() * 6.28
-                    };
+                    const c1 = cfg.bossChance + cfg.phantomChance;
+                    const c2 = c1 + cfg.splitterChance;
+                    const c3 = c2 + cfg.chargerChance;
+                    const subType = gRoll < c1 ? 'phantom' : (gRoll < c2 ? 'splitter' : (gRoll < c3 ? 'charger' : 'slimer'));
+                    entity = makeGhostEntity(subType, lane, z);
                 }
             }
             // 3) Manhattan Road Obstacles:
@@ -4817,6 +5238,151 @@
                 const other = (lane + 1 + Math.floor(Math.random() * 4)) % 5;
                 spawnEntity(other, true);
             }
+        }
+
+        // ---------- Proton beam targeting, damage & busting ----------
+        function findBeamTarget(laneX) {
+            let best = null;
+            let bestDist = MAX_BEAM_RANGE;
+            for (let i = 0; i < entities.length; i++) {
+                const ent = entities[i];
+                if (ent.kind === 'powerup') continue;
+                if (ent.z >= -0.4 || ent.z < -MAX_BEAM_RANGE) continue;
+                if (Math.abs(ent.x - laneX) < 1.08) {
+                    const dist = -ent.z;
+                    if (dist < bestDist) {
+                        bestDist = dist;
+                        best = ent;
+                    }
+                }
+            }
+            return best;
+        }
+
+        function ghostAimPos(ent) {
+            const y = ent.subType === 'boss' ? 1.75 : (ent.subType === 'mini' ? 1.3 : 1.45);
+            return new THREE.Vector3(ent.x, y, ent.z);
+        }
+
+        function obstacleAimPos(ent) {
+            return new THREE.Vector3(ent.x, 1.0, ent.z + (ent.zHalfLen || 0.6));
+        }
+
+        // Stay Puft Mini-Boss Toasting Shader & Health Bar Update
+        function updateBossToast(ent) {
+            if (ent.subType !== 'boss' || !ent.mesh.userData) return;
+            const hpRatio = Math.max(0, ent.hp / ent.maxHp);
+            const uData = ent.mesh.userData;
+            if (uData.puffShaderMat) {
+                uData.puffShaderMat.uniforms.uToast.value = 1 - hpRatio;
+            }
+            if (uData.hpBarFill) {
+                uData.hpBarFill.scale.x = Math.max(0.01, hpRatio);
+                uData.hpBarFill.position.x = -(1 - hpRatio) * 0.83;
+                uData.hpBarFill.material.color.setHex(
+                    hpRatio > 0.55 ? 0x39ff14 : (hpRatio > 0.25 ? 0xffa500 : 0xff2a5f)
+                );
+            }
+        }
+
+        function applyBeamDamage(ent, amount, endPos) {
+            const isBoss = ent.subType === 'boss';
+            ent.hp -= amount;
+            ent.mesh.position.x = ent.x + (Math.random() - 0.5) * 0.26;
+
+            if (isBoss) {
+                updateBossToast(ent);
+                if (sizzleSfxCooldown <= 0) {
+                    audio.playMarshmallowSizzle();
+                    sizzleSfxCooldown = 0.11;
+                }
+            }
+
+            if (sparkCooldown <= 0) {
+                spawnImpactSparks(endPos, isBoss ? 0xffaa00 : 0x39ff14, isBoss ? 7 : 5);
+                sparkCooldown = 0.05;
+            }
+
+            if (ent.hp <= 0) bustGhost(ent, endPos, false);
+        }
+
+        const GHOST_BURST_COLORS = { phantom: 0x00f5ff, splitter: 0xff2a85, mini: 0xff7ac8, charger: 0xff3b1f };
+        const GHOST_POP_COLORS = { phantom: '#00f5ff', splitter: '#ff7ac8', mini: '#ff7ac8', charger: '#ff6b4a' };
+
+        function bustGhost(ent, endPos, viaChain) {
+            const idx = entities.indexOf(ent);
+            if (idx === -1) return;
+            const isBoss = ent.subType === 'boss';
+
+            combo++;
+            comboTimer = 3.0;
+            const mult = Math.min(5, combo);
+            if (mult > maxCombo) maxCombo = mult;
+
+            const frenzMult = doublePointsTimer > 0 ? 2 : 1;
+            const pts = ent.points * mult * frenzMult;
+            score += pts;
+            ghostsBusted++;
+
+            if (isBoss) {
+                spawnToastedMarshmallowExplosion(endPos);
+                bustFlashLight.position.set(endPos.x, 2.6, endPos.z);
+                bustFlashLight.color.setHex(0xffaa00);
+                bustFlashIntensity = 9.0;
+                audio.playMarshmallowPop();
+            } else {
+                const burstCol = GHOST_BURST_COLORS[ent.subType] || 0x39ff14;
+                spawnShockwaveRing(endPos, burstCol, ent.subType === 'mini' ? 3.0 : 4.6);
+                spawnBurstParticles(endPos, burstCol, ent.subType === 'mini' ? 12 : 24, 1.1);
+                bustFlashLight.position.set(endPos.x, 2.4, endPos.z);
+                bustFlashLight.color.setHex(burstCol);
+                bustFlashIntensity = 7.5;
+                audio.playGhostBust(combo);
+            }
+
+            if (roadShaderMat) {
+                roadShaderMat.uniforms.uFlashPos.value.set(endPos.x, endPos.z);
+                roadShaderMat.uniforms.uFlashColor.value.setHex(isBoss ? 0xffaa00 : 0x39ff14);
+            }
+
+            bustFlashEl.style.opacity = '0.85';
+            setTimeout(() => { bustFlashEl.style.opacity = '0'; }, 95);
+            triggerShake(isBoss ? 0.30 : 0.14, isBoss ? 0.36 : 0.16);
+
+            const label = isBoss
+                ? `TOASTED! +${pts}!`
+                : (mult >= 2 ? `${mult}x COMBO! +${pts}` : `+${pts}`);
+            const popColor = isBoss ? '#ffd500' : (GHOST_POP_COLORS[ent.subType] || '#39ff14');
+            spawnPopup(endPos, label, popColor, isBoss || mult >= 3);
+
+            if (combo >= 4 && !inFeverMode) setFeverState(true);
+
+            scene.remove(ent.mesh);
+            entities.splice(idx, 1);
+
+            if (ent.subType === 'splitter') spawnSplitMinis(ent);
+            if (chainTimer > 0 && !viaChain) chainLightningFrom(ent, endPos);
+            updateHUD();
+        }
+
+        // Chain Lightning: a bust arcs to up to 2 nearby ghosts (no further chaining)
+        function chainLightningFrom(source, fromPos) {
+            const targets = entities
+                .filter(e => e.kind === 'ghost' && e.z < -0.4 && e.z > -MAX_BEAM_RANGE - 6)
+                .map(e => ({ e, d: Math.hypot(e.x - source.x, e.z - source.z) }))
+                .filter(o => o.d < 10)
+                .sort((p, q) => p.d - q.d)
+                .slice(0, 2);
+            if (!targets.length) return;
+            audio.playChainZap();
+            targets.forEach(({ e }) => {
+                const to = ghostAimPos(e);
+                spawnChainArc(fromPos, to);
+                e.hp -= 0.4;
+                spawnImpactSparks(to, 0xbae6fd, 6);
+                if (e.subType === 'boss') updateBossToast(e);
+                if (e.hp <= 0) bustGhost(e, to, true);
+            });
         }
 
         function handlePlayerHit(hitEnt = null) {
@@ -5042,6 +5608,8 @@
 
                     if (overchargeTimer > 0) overchargeTimer = Math.max(0, overchargeTimer - dt);
                     if (doublePointsTimer > 0) doublePointsTimer = Math.max(0, doublePointsTimer - dt);
+                    if (wideBeamTimer > 0) wideBeamTimer = Math.max(0, wideBeamTimer - dt);
+                    if (chainTimer > 0) chainTimer = Math.max(0, chainTimer - dt);
 
                     if (comboTimer > 0) {
                         comboTimer -= dt;
@@ -5077,118 +5645,19 @@
                         wandTipMesh.getWorldPosition(startPos);
 
                         // Straight-Ahead Lane-Locked Proton Stream
-                        let closestHit = null;
-                        let closestDist = MAX_BEAM_RANGE;
-
-                        for (let i = 0; i < entities.length; i++) {
-                            const ent = entities[i];
-                            if (ent.kind === 'powerup') continue;
-                            if (ent.z >= -0.4 || ent.z < -MAX_BEAM_RANGE) continue;
-                            if (Math.abs(ent.x - corgiX) < 1.08) {
-                                const dist = -ent.z;
-                                if (dist < closestDist) {
-                                    closestDist = dist;
-                                    closestHit = ent;
-                                }
-                            }
-                        }
+                        const closestHit = findBeamTarget(corgiX);
 
                         let endPos;
                         let hasImpact = false;
+                        const dmg = dt * (overchargeTimer > 0 ? 1.65 : 1.0);
 
                         if (closestHit) {
                             hasImpact = true;
                             if (closestHit.kind === 'ghost') {
-                                const isBoss = closestHit.subType === 'boss';
-                                endPos = new THREE.Vector3(closestHit.x, isBoss ? 1.75 : 1.45, closestHit.z);
-                                const dmgMult = overchargeTimer > 0 ? 1.65 : 1.0;
-                                closestHit.hp -= dt * dmgMult;
-
-                                closestHit.mesh.position.x = closestHit.x + (Math.random() - 0.5) * 0.26;
-
-                                // Stay Puft Mini-Boss Toasting Shader & Health Bar Update
-                                if (isBoss && closestHit.mesh.userData) {
-                                    const hpRatio = Math.max(0, closestHit.hp / closestHit.maxHp);
-                                    const toastProgress = 1 - hpRatio;
-                                    const uData = closestHit.mesh.userData;
-
-                                    if (uData.puffShaderMat) {
-                                        uData.puffShaderMat.uniforms.uToast.value = toastProgress;
-                                    }
-
-                                    if (uData.hpBarFill) {
-                                        uData.hpBarFill.scale.x = Math.max(0.01, hpRatio);
-                                        uData.hpBarFill.position.x = -(1 - hpRatio) * 0.83;
-                                        uData.hpBarFill.material.color.setHex(
-                                            hpRatio > 0.55 ? 0x39ff14 : (hpRatio > 0.25 ? 0xffa500 : 0xff2a5f)
-                                        );
-                                    }
-
-                                    if (sizzleSfxCooldown <= 0) {
-                                        audio.playMarshmallowSizzle();
-                                        sizzleSfxCooldown = 0.11;
-                                    }
-                                }
-
-                                if (sparkCooldown <= 0) {
-                                    spawnImpactSparks(endPos, isBoss ? 0xffaa00 : 0x39ff14, isBoss ? 7 : 5);
-                                    sparkCooldown = 0.05;
-                                }
-
-                                if (closestHit.hp <= 0) {
-                                    combo++;
-                                    comboTimer = 3.0;
-                                    const mult = Math.min(5, combo);
-                                    if (mult > maxCombo) maxCombo = mult;
-
-                                    const frenzMult = doublePointsTimer > 0 ? 2 : 1;
-                                    const pts = closestHit.points * mult * frenzMult;
-                                    score += pts;
-                                    ghostsBusted++;
-
-                                    if (isBoss) {
-                                        spawnToastedMarshmallowExplosion(endPos);
-                                        bustFlashLight.position.set(endPos.x, 2.6, endPos.z);
-                                        bustFlashLight.color.setHex(0xffaa00);
-                                        bustFlashIntensity = 9.0;
-                                        audio.playMarshmallowPop();
-                                    } else {
-                                        const burstCol = closestHit.subType === 'phantom' ? 0x00f5ff : 0x39ff14;
-                                        spawnShockwaveRing(endPos, burstCol, 4.6);
-                                        spawnBurstParticles(endPos, burstCol, 24, 1.1);
-                                        bustFlashLight.position.set(endPos.x, 2.4, endPos.z);
-                                        bustFlashLight.color.setHex(burstCol);
-                                        bustFlashIntensity = 7.5;
-                                        audio.playGhostBust(combo);
-                                    }
-
-                                    if (roadShaderMat) {
-                                        roadShaderMat.uniforms.uFlashPos.value.set(endPos.x, endPos.z);
-                                        roadShaderMat.uniforms.uFlashColor.value.setHex(isBoss ? 0xffaa00 : 0x39ff14);
-                                    }
-
-                                    bustFlashEl.style.opacity = '0.85';
-                                    setTimeout(() => { bustFlashEl.style.opacity = '0'; }, 95);
-                                    triggerShake(isBoss ? 0.30 : 0.14, isBoss ? 0.36 : 0.16);
-
-                                    const label = isBoss
-                                        ? `TOASTED! +${pts}!`
-                                        : (mult >= 2 ? `${mult}x COMBO! +${pts}` : `+${pts}`);
-                                    const popColor = isBoss
-                                        ? '#ffd500'
-                                        : (closestHit.subType === 'phantom' ? '#00f5ff' : '#39ff14');
-                                    spawnPopup(endPos, label, popColor, isBoss || mult >= 3);
-
-                                    if (combo >= 4 && !inFeverMode) setFeverState(true);
-
-                                    scene.remove(closestHit.mesh);
-                                    const idx = entities.indexOf(closestHit);
-                                    if (idx !== -1) entities.splice(idx, 1);
-                                    updateHUD();
-                                }
+                                endPos = ghostAimPos(closestHit);
+                                applyBeamDamage(closestHit, dmg, endPos);
                             } else {
-                                const zFront = closestHit.z + (closestHit.zHalfLen || 0.6);
-                                endPos = new THREE.Vector3(closestHit.x, 1.0, zFront);
+                                endPos = obstacleAimPos(closestHit);
                                 if (sparkCooldown <= 0) {
                                     spawnImpactSparks(endPos, 0xffaa00, 6);
                                     sparkCooldown = 0.045;
@@ -5203,6 +5672,27 @@
                             endPos = new THREE.Vector3(corgiX, 1.38 + corgiY * 0.4, -MAX_BEAM_RANGE);
                         }
 
+                        // Wide Beam: two extra streams fan out into the neighboring lanes
+                        if (wideBeamTimer > 0) {
+                            [-1, 1].forEach((side, si) => {
+                                const laneX = corgiX + side * 2.2;
+                                if (Math.abs(laneX) > 5.0) { sideBeams[si].core.visible = false; sideBeams[si].arc.visible = false; return; }
+                                const t = findBeamTarget(laneX);
+                                let sideEnd;
+                                if (t && t.kind === 'ghost') {
+                                    sideEnd = ghostAimPos(t);
+                                    applyBeamDamage(t, dmg, sideEnd);
+                                } else if (t) {
+                                    sideEnd = obstacleAimPos(t);
+                                } else {
+                                    sideEnd = new THREE.Vector3(laneX, 1.38 + corgiY * 0.4, -MAX_BEAM_RANGE);
+                                }
+                                updateSideBeam(si, startPos, sideEnd, tSec);
+                            });
+                        } else {
+                            hideSideBeams();
+                        }
+
                         updateLiveProtonBeam(startPos, endPos, hasImpact, tSec);
 
                         if (protonEnergy <= 0 && overchargeTimer <= 0) {
@@ -5211,6 +5701,7 @@
                         }
                     } else {
                         beamGroup.visible = false;
+                        hideSideBeams();
                         beamLight.intensity = 0;
                         audio.setBeamHum(false);
                         protonEnergy = Math.min(100, protonEnergy + 24 * dt);
@@ -5226,7 +5717,25 @@
                     // Update Entities, Power-Up Pickups & Fence-Only Jump Collisions
                     for (let i = entities.length - 1; i >= 0; i--) {
                         const ent = entities[i];
-                        const speedMult = ent.subType === 'taxi' ? 1.18 : (ent.subType === 'boss' ? 0.92 : 1.0);
+                        let speedMult = ent.subType === 'taxi' ? 1.18 : (ent.subType === 'boss' ? 0.92 : 1.0);
+                        if (ent.subType === 'charger') {
+                            // approach slowly -> stop and flash a lane warning -> dash at the player
+                            if (ent.chargeState === 'approach') {
+                                speedMult = 0.6;
+                                if (ent.z >= -40) {
+                                    ent.chargeState = 'warn';
+                                    ent.warnTimer = 0.7;
+                                    audio.playChargerWarn();
+                                    spawnPopup(new THREE.Vector3(ent.x, 2.9, ent.z), '⚠ CHARGE!', '#ff6b4a');
+                                }
+                            } else if (ent.chargeState === 'warn') {
+                                speedMult = 0.12;
+                                ent.warnTimer -= dt;
+                                if (ent.warnTimer <= 0) ent.chargeState = 'charge';
+                            } else {
+                                speedMult = 2.3;
+                            }
+                        }
                         ent.z += runSpeed * speedMult * dt;
 
                         if (ent.kind === 'ghost') {
@@ -5257,6 +5766,22 @@
                                         ent.targetX = LANE_X[nl];
                                     }
                                     ent.x = THREE.MathUtils.lerp(ent.x, ent.targetX, dt * 4.5);
+                                } else if (ent.subType === 'mini') {
+                                    ent.x = THREE.MathUtils.lerp(ent.x, ent.targetX, dt * 6.0);
+                                } else if (ent.subType === 'charger') {
+                                    const stripe = ent.mesh.userData.stripe;
+                                    if (ent.chargeState === 'approach') {
+                                        stripe.visible = false;
+                                    } else {
+                                        const len = Math.max(0.5, -ent.z);
+                                        stripe.visible = true;
+                                        stripe.scale.set(1, len, 1);
+                                        stripe.position.set(0, 0.05 - ent.mesh.position.y, len * 0.5);
+                                        stripe.material.opacity = ent.chargeState === 'warn'
+                                            ? (Math.floor(tSec * 14) % 2 === 0 ? 0.6 : 0.18)
+                                            : 0.42;
+                                        if (ent.chargeState === 'charge') ent.mesh.position.y = 0.1;
+                                    }
                                 }
                             }
                             ent.mesh.position.x = ent.x;
@@ -5303,6 +5828,18 @@
                                     spawnShockwaveRing(new THREE.Vector3(ent.x, 0.14, 0), 0xffd500, 3.8);
                                     spawnBurstParticles(new THREE.Vector3(ent.x, 1.2, 0), 0xffd500, 18);
                                     spawnPopup(new THREE.Vector3(ent.x, 1.9, 0), '2X FRENZY 7s!', '#ffd500', true);
+                                } else if (ent.puType === 'widebeam') {
+                                    wideBeamTimer = WIDE_BEAM_DURATION;
+                                    score += 100;
+                                    spawnShockwaveRing(new THREE.Vector3(ent.x, 0.14, 0), 0xff2a85, 3.8);
+                                    spawnBurstParticles(new THREE.Vector3(ent.x, 1.2, 0), 0xff2a85, 18);
+                                    spawnPopup(new THREE.Vector3(ent.x, 1.9, 0), `WIDE BEAM ${WIDE_BEAM_DURATION}s!`, '#ff7ac8', true);
+                                } else if (ent.puType === 'chain') {
+                                    chainTimer = CHAIN_DURATION;
+                                    score += 100;
+                                    spawnShockwaveRing(new THREE.Vector3(ent.x, 0.14, 0), 0x7dd3fc, 3.8);
+                                    spawnBurstParticles(new THREE.Vector3(ent.x, 1.2, 0), 0x7dd3fc, 18);
+                                    spawnPopup(new THREE.Vector3(ent.x, 1.9, 0), `CHAIN LIGHTNING ${CHAIN_DURATION}s!`, '#bae6fd', true);
                                 } else {
                                     lives = Math.min(3, lives + 1);
                                     score += 100;
@@ -5368,6 +5905,8 @@
                         }
                     }
                 }
+
+                updateChainArcs(dt, gameState === 'PLAYING' ? runSpeed * dt : 0);
 
                 // 4. Cyclotron Lights on Proton Pack
                 const cycSpeed = inFeverMode ? 28 : (activelyFiring ? 18 : 5.5);

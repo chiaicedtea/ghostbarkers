@@ -7,6 +7,7 @@ The game exists to **grow the @lalacorgi.studios Instagram** and **drive traffic
 
 ## Key design decisions
 - The marshmallow boss is a **feline** marshmallow (cat ears, slit-pupil eyes, whiskers, toe beans, curly tail). Keep it a cat.
+- Each round adds one new ghost and one blaster power-up: Round 2 = pink **Splitter** ghost (pops into 2 minis) + **Wide Beam** (hits neighboring lanes); Round 3 = red **Charger** ghost (flashes a lane warning, then dashes) + **Chain Lightning** (busts arc to 2 nearby ghosts). Upgrades last 5s and reset each round. Tunables live in each `ROUNDS` entry (`splitterChance`, `chargerChance`, `powerups`, `intro`).
 - End screen shows **1–3 stars**: lose in Round 1 = 1★, lose in Round 2 or 3 = 2★, clear all 3 rounds = 3★.
 - **3 stars unlocks a merch discount code** (tap to copy). Fewer stars shows a locked teaser.
 - End screen buttons: Shop Merch, Follow La La (Instagram), Play Again, Share, Main Menu.
