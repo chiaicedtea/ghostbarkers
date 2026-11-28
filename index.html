@@ -1260,7 +1260,9 @@
                 skyColor: 0x050b16,
                 ambientSky: 0x6ea8cc,
                 ambientGround: 0x102820,
-                curbColor: 0x00f5ff
+                curbColor: 0x00f5ff,
+                coneGateChance: 0.06,   // 2 cones side by side (route around them)
+                fenceSqueezeChance: 0.00 // fence with cones on both sides (jump it!)
             },
             {
                 num: 2,
@@ -1290,7 +1292,9 @@
                 skyColor: 0x120522,
                 ambientSky: 0xc074ff,
                 ambientGround: 0x260b2e,
-                curbColor: 0xff2a85
+                curbColor: 0xff2a85,
+                coneGateChance: 0.08,
+                fenceSqueezeChance: 0.06
             },
             {
                 num: 3,
@@ -1320,7 +1324,9 @@
                 skyColor: 0x08111b,
                 ambientSky: 0x62e6a8,
                 ambientGround: 0x1a0e2e,
-                curbColor: 0x39ff14
+                curbColor: 0x39ff14,
+                coneGateChance: 0.05,
+                fenceSqueezeChance: 0.06
             }
         ];
 
@@ -4254,6 +4260,19 @@
             bandHigh.position.y = 1.18;
             g.add(bandHigh);
 
+            // Cute face between the white bands, and a pink bow on top
+            addCuteFace(g, 0, 0.97, 0.30, 0.075, 0.12);
+            [-1, 1].forEach(side => {
+                const loop = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.26, 8), obstacleFace.bowMat);
+                loop.rotation.z = side * Math.PI / 2;
+                loop.position.set(side * 0.13, 1.68, 0);
+                g.add(loop);
+            });
+            const knot = new THREE.Mesh(obstacleFace.eyeGeo, obstacleFace.bowMat);
+            knot.scale.setScalar(0.07);
+            knot.position.set(0, 1.68, 0);
+            g.add(knot);
+
             return g;
         }
 
@@ -4334,6 +4353,9 @@
                 g.add(hl);
             });
 
+            // Cute face on the windshield, looking at the corgi
+            addCuteFace(g, 0, 1.28, 0.93, 0.15, 0.36, true);
+
             [[-0.92, 1.1], [0.92, 1.1], [-0.92, -1.1], [0.92, -1.1]].forEach(([wx, wz]) => {
                 const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.22, 10), wheelMat);
                 wheel.rotation.z = Math.PI / 2;
@@ -4342,6 +4364,81 @@
             });
 
             return g;
+        }
+
+        // Cute faces for road obstacles (shared geometry/materials, built once)
+        const obstacleFace = {
+            eyeGeo: new THREE.SphereGeometry(1, 14, 12),
+            eyeMat: new THREE.MeshBasicMaterial({ color: 0x1a1325 }),
+            sparkleMat: new THREE.MeshBasicMaterial({ color: 0xffffff }),
+            blushMat: new THREE.MeshBasicMaterial({ color: 0xff8fb8, transparent: true, opacity: 0.85 }),
+            smileMat: new THREE.MeshBasicMaterial({ color: 0x1a1325 }),
+            bowMat: new THREE.MeshStandardMaterial({ color: 0xff5fa8, emissive: 0xff2d8a, emissiveIntensity: 0.35, roughness: 0.5 })
+        };
+        // Adds two sparkly eyes, a small smile and pink blush to a group, facing the player (+z)
+        function addCuteFace(g, cx, cy, cz, eyeR, spread, eyeWhites = false) {
+            [-1, 1].forEach(side => {
+                if (eyeWhites) {
+                    // White backing so dark eyes still read on a dark windshield
+                    const white = new THREE.Mesh(obstacleFace.eyeGeo, obstacleFace.sparkleMat);
+                    white.scale.set(eyeR * 1.35, eyeR * 1.5, eyeR * 0.3);
+                    white.position.set(cx + side * spread, cy, cz - eyeR * 0.12);
+                    g.add(white);
+                }
+                const eye = new THREE.Mesh(obstacleFace.eyeGeo, obstacleFace.eyeMat);
+                eye.scale.set(eyeR, eyeR * 1.15, eyeR * 0.5);
+                eye.position.set(cx + side * spread, cy, cz);
+                g.add(eye);
+                const sparkle = new THREE.Mesh(obstacleFace.eyeGeo, obstacleFace.sparkleMat);
+                sparkle.scale.setScalar(eyeR * 0.36);
+                sparkle.position.set(cx + side * spread + eyeR * 0.32, cy + eyeR * 0.4, cz + eyeR * 0.45);
+                g.add(sparkle);
+                const blush = new THREE.Mesh(obstacleFace.eyeGeo, obstacleFace.blushMat);
+                blush.scale.set(eyeR * 0.8, eyeR * 0.45, eyeR * 0.2);
+                blush.position.set(cx + side * spread * 1.45, cy - eyeR * 1.25, cz - eyeR * 0.05);
+                g.add(blush);
+            });
+            const smile = new THREE.Mesh(
+                new THREE.TorusGeometry(spread * 0.42, eyeR * 0.16, 6, 14, Math.PI),
+                obstacleFace.smileMat
+            );
+            smile.rotation.z = Math.PI;
+            smile.position.set(cx, cy - eyeR * 0.9, cz);
+            g.add(smile);
+        }
+
+        // Builds one road obstacle (cab, fence or cone) in a lane and adds it to the scene
+        function makeObstacleEntity(subType, lane, z) {
+            const x = LANE_X[lane];
+            let mesh, hitRadius, zHalfLen, jumpable;
+            if (subType === 'taxi') {
+                mesh = createYellowCabMesh();
+                hitRadius = 1.05;
+                zHalfLen = 1.95;
+                jumpable = false;
+            } else if (subType === 'barricade') {
+                mesh = createBarricadeMesh();
+                hitRadius = 1.0;
+                zHalfLen = 0.55;
+                jumpable = true; // ONLY NYPD fences can be hopped over!
+            } else {
+                mesh = createTrafficConeMesh();
+                hitRadius = 0.90;
+                zHalfLen = 0.65;
+                jumpable = false; // Orange cones CANNOT be hopped over!
+            }
+            mesh.position.set(x, 0, z);
+            scene.add(mesh);
+            return {
+                kind: 'obstacle',
+                subType,
+                jumpable,
+                lane, x, z, mesh,
+                hitRadius,
+                zHalfLen,
+                nearMissed: false,
+                hurdled: false
+            };
         }
 
         // 4 Colorful 3D Collectible Power-Ups
@@ -5506,39 +5603,25 @@
             //    - Orange Traffic Cone ('cone'): jumpable = false (MUST DODGE)
             //    - Yellow NYC Cab ('taxi'): jumpable = false (MUST DODGE)
             else {
-                const oRoll = Math.random();
-                let mesh, subType, hitRadius, zHalfLen, jumpable;
-                if (oRoll < cfg.taxiChance) {
-                    mesh = createYellowCabMesh();
-                    subType = 'taxi';
-                    hitRadius = 1.05;
-                    zHalfLen = 1.95;
-                    jumpable = false;
-                } else if (oRoll < cfg.taxiChance + 0.44) {
-                    mesh = createBarricadeMesh();
-                    subType = 'barricade';
-                    hitRadius = 1.0;
-                    zHalfLen = 0.55;
-                    jumpable = true; // ONLY NYPD fences can be hopped over!
-                } else {
-                    mesh = createTrafficConeMesh();
-                    subType = 'cone';
-                    hitRadius = 0.90;
-                    zHalfLen = 0.65;
-                    jumpable = false; // Orange cones CANNOT be hopped over!
+                // Obstacle formations (never stacked with a side-by-side pair, so lanes stay open)
+                const fRoll = Math.random();
+                if (!hazardOnly && fRoll < (cfg.fenceSqueezeChance || 0)) {
+                    // Fence with cones on both sides: jumping is the clean way through
+                    entities.push(makeObstacleEntity('barricade', lane, z));
+                    if (lane > 0) entities.push(makeObstacleEntity('cone', lane - 1, z));
+                    if (lane < 4) entities.push(makeObstacleEntity('cone', lane + 1, z));
+                    return;
                 }
-                mesh.position.set(x, 0, z);
-                scene.add(mesh);
-                entity = {
-                    kind: 'obstacle',
-                    subType,
-                    jumpable,
-                    lane, x, z, mesh,
-                    hitRadius,
-                    zHalfLen,
-                    nearMissed: false,
-                    hurdled: false
-                };
+                if (!hazardOnly && fRoll < (cfg.fenceSqueezeChance || 0) + (cfg.coneGateChance || 0)) {
+                    // Cone gate: 2 cones side by side, route around the pair
+                    const lane2 = lane === 4 ? 3 : (lane === 0 ? 1 : lane + (Math.random() < 0.5 ? -1 : 1));
+                    entities.push(makeObstacleEntity('cone', lane, z));
+                    entities.push(makeObstacleEntity('cone', lane2, z));
+                    return;
+                }
+                const oRoll = Math.random();
+                const subType = oRoll < cfg.taxiChance ? 'taxi' : (oRoll < cfg.taxiChance + 0.44 ? 'barricade' : 'cone');
+                entity = makeObstacleEntity(subType, lane, z);
             }
 
             entities.push(entity);
@@ -5730,6 +5813,9 @@
                 spawnPopup(new THREE.Vector3(corgiX, 1.9, 0), 'DODGE CONES!', '#ff6b00');
             } else if (hitEnt && hitEnt.subType === 'taxi') {
                 spawnPopup(new THREE.Vector3(corgiX, 1.9, 0), 'DODGE CABS!', '#ffd500');
+            } else if (hitEnt && hitEnt.subType === 'barricade') {
+                const touch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+                spawnPopup(new THREE.Vector3(corgiX, 1.9, 0), touch ? 'SWIPE UP TO JUMP!' : 'PRESS ▲ TO JUMP!', '#39ff14');
             }
 
             updateHUD();
